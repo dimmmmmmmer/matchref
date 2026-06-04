@@ -53,6 +53,32 @@ def _content_gray(image: np.ndarray, config: AppConfig) -> np.ndarray:
     return gray[crop.y0 : crop.y1, crop.x0 : crop.x1]
 
 
+def _auto_highlight_clip(reference_gray: np.ndarray, config: AppConfig) -> float:
+    """
+    Clip level for highlight-dominated dark shots (fire/specular flicker).
+
+    Such shots have a small, very bright, high-variance region on a dark base that
+    hijacks the correlation and pulls position off the static structure. Clipping
+    highlights lets the rigid dark structure drive the match. Returns 0 (no clip)
+    for normal/bright scenes. ``match_highlight_clip``: "auto" | 0/off | <number>.
+    """
+    setting = config.get("match_highlight_clip", "auto")
+    if isinstance(setting, (int, float)):
+        return float(setting)
+    if str(setting).lower() in ("off", "none", "0", ""):
+        return 0.0
+    # auto: only dark-dominant scenes, clip relative to the median brightness.
+    nonzero = reference_gray[reference_gray > 1.0]
+    if nonzero.size == 0:
+        return 0.0
+    median = float(np.median(nonzero))
+    dark_threshold = float(config.get("highlight_clip_dark_median", 48.0))
+    if median >= dark_threshold:
+        return 0.0
+    clip = median * float(config.get("highlight_clip_median_mult", 5.0))
+    return clip if clip < 255.0 else 0.0
+
+
 def _gradient_magnitude(gray: np.ndarray) -> np.ndarray:
     """Sobel gradient magnitude — invariant to grade/exposure, sharp at edges."""
     blur = cv2.GaussianBlur(gray, (3, 3), 0)
@@ -86,16 +112,26 @@ class _Reference:
     """
 
     def __init__(self, reference: np.ndarray, config: AppConfig) -> None:
+        self._config = config
         gray = _content_gray(reference, config)
+        # Clip derived once from the (stable, full-frame) offline reference and
+        # applied identically to every rendered online frame, so both sides drop
+        # the same flicker highlights.
+        self._clip = _auto_highlight_clip(gray, config)
+        gray = self._clipped(gray)
         self._intensity = _zero_mean_norm(gray)
         self._gradient = _zero_mean_norm(_gradient_magnitude(gray))
-        self._config = config
+
+    def _clipped(self, gray: np.ndarray) -> np.ndarray:
+        if self._clip > 0:
+            return np.minimum(gray, self._clip)
+        return gray
 
     def intensity_ncc(self, rendered: np.ndarray) -> float:
-        return _ncc_against(_content_gray(rendered, self._config), *self._intensity)
+        return _ncc_against(self._clipped(_content_gray(rendered, self._config)), *self._intensity)
 
     def gradient_ncc(self, rendered: np.ndarray) -> float:
-        feat = _gradient_magnitude(_content_gray(rendered, self._config))
+        feat = _gradient_magnitude(self._clipped(_content_gray(rendered, self._config)))
         return _ncc_against(feat, *self._gradient)
 
     def score(self, rendered: np.ndarray) -> float:
