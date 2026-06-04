@@ -54,6 +54,37 @@ def decompose_warp_matrix(
     return scale, tx, ty, rotation_deg
 
 
+def center_relative_translation(
+    warp: np.ndarray,
+    width: int,
+    height: int,
+    *,
+    invert: bool = False,
+) -> tuple[float, float]:
+    """
+    Resolve Pan/Tilt (timeline px) from an online→offline affine warp.
+
+    Resolve scales/rotates about the frame center and *then* translates, while the
+    raw affine stores translation relative to the top-left corner. A pure center
+    zoom therefore carries a large corner translation but zero Pan/Tilt — using the
+    corner value directly mis-places every clip that also has a scale change. This
+    converts corner translation to the center-relative Pan/Tilt that Resolve expects
+    (sign conventions invert_pan_x / invert_tilt_y are applied by the caller).
+    """
+    matrix = np.asarray(warp, dtype=np.float64)
+    if matrix.shape == (3, 3):
+        matrix = matrix[:2, :]
+    if invert:
+        aug = np.vstack([matrix, [0.0, 0.0, 1.0]])
+        matrix = np.linalg.inv(aug)[:2, :]
+    a, b, tx = matrix[0]
+    c, d, ty = matrix[1]
+    cx, cy = width * 0.5, height * 0.5
+    pan = tx - cx + a * cx + b * cy
+    tilt = ty - cy + c * cx + d * cy
+    return float(pan), float(tilt)
+
+
 def resolve_transform(
     sample: TransformSample,
     config: AppConfig,
@@ -96,12 +127,13 @@ def resolve_transform(
 
     warp = getattr(sample, "warp_matrix", None)
     if warp is not None:
-        scale, tx, ty, rot = decompose_warp_matrix(
-            warp,
-            width,
-            height,
-            invert=bool(config.get("alignment_invert", False)),
+        invert = bool(config.get("alignment_invert", False))
+        scale, _tx_corner, _ty_corner, rot = decompose_warp_matrix(
+            warp, width, height, invert=invert
         )
+        # Pan/Tilt must be center-relative (Resolve scales about center), not the
+        # raw corner translation returned by decompose_warp_matrix.
+        tx, ty = center_relative_translation(warp, width, height, invert=invert)
     else:
         scale = float(sample.scale)
         rot = float(sample.rotation_deg)

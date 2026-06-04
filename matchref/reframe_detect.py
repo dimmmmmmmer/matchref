@@ -23,16 +23,15 @@ def translation_pixels_from_warp(
 ) -> tuple[float, float]:
     if warp is None:
         return 0.0, 0.0
-    from matchref.transform_convert import decompose_warp_matrix
+    from matchref.transform_convert import center_relative_translation
 
     width, height = int(timeline_size[0]), int(timeline_size[1])
-    _, tx, ty, _ = decompose_warp_matrix(
+    pan, tilt = center_relative_translation(
         np.asarray(warp),
         width,
         height,
         invert=bool(config.get("alignment_invert", False)),
     )
-    pan, tilt = tx, ty
     if bool(config.get("invert_pan_x", False)):
         pan = -pan
     if bool(config.get("invert_tilt_y", True)):
