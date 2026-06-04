@@ -23,7 +23,7 @@
   "ecc_pyramid_width_fractions": [0.25, 0.5, 1.0],
   "refine_subpixel_translation": true,
   "resolve_edit_refine": true,
-  "refine_cost_metric": "intensity",
+  "refine_cost_metric": "blend",
   "refine_score_metric": "max",
   "refine_stage_passes": 4,
   "refine_max_width": 1920,
