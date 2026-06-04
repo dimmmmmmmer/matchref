@@ -136,42 +136,76 @@ def sample_refine_accepted(
     """
     Decide whether a single refined sample is good enough to keep.
 
-    Returns (accepted, reasons, accept_via) where accept_via is "score" (cleared the
-    strict NCC bar) or "agreement" (lower trust floor + corroborated geometry).
+    Returns (accepted, reasons, accept_via) where accept_via is "score" (strict NCC),
+    "agreement" (lower trust floor + corroborated geometry), or "zoom-only".
 
     score mode:      strict — NCC >= refine threshold, structure floor, plausible.
     agreement mode:  plausible + structural + (high NCC OR corroborated geometry at a
                      lower trust floor). This keeps geometrically-correct matches that
                      a grade/smoke/fire legitimately caps below the strict NCC bar.
+    zoom-only:       a low-structure clip with NO reframe (Pan/Tilt ≈ 0) whose zoom is
+                     corroborated (ECC ≈ refine) is accepted on zoom alone at a lower
+                     structure floor. Pan-runaways never qualify (their position ≠ 0),
+                     so this can't pass a garbage shift.
     """
-    reasons: list[str] = []
     plausible = refine_edit_plausible(edit, timeline_size, config)
     structural = refine_structure_passes(gradient_ncc, config)
-    if not plausible:
-        lim = max_refine_pan_tilt_pixels(timeline_size, config)
-        reasons.append(f"pan/tilt {edit.pan:.0f},{edit.tilt:.0f} exceed {lim:.0f}px")
-    if not structural:
-        reasons.append(
-            f"structure {gradient_ncc:.3f} < {refine_gradient_floor(config):.2f} (intensity-only match)"
-        )
+    corroborated = geometry_corroborated(ecc_scale, edit.zoom_x, config)
+    snap = float(config.get("snap_pan_tilt_below_pixels", 2.0))
+    position_zero = abs(float(edit.pan)) < snap and abs(float(edit.tilt)) < snap
+    # Only rescues the low-structure band [zoom_only_floor, normal floor): a clip that
+    # already clears the normal structure floor must go through the standard logic.
+    zoom_only = (
+        not structural
+        and position_zero
+        and corroborated
+        and float(gradient_ncc) >= float(config.get("refine_zoom_only_min_gradient", 0.30))
+    )
+
+    pan_reason = (
+        f"pan/tilt {edit.pan:.0f},{edit.tilt:.0f} exceed "
+        f"{max_refine_pan_tilt_pixels(timeline_size, config):.0f}px"
+    )
+    struct_reason = (
+        f"structure {gradient_ncc:.3f} < {refine_gradient_floor(config):.2f} (intensity-only match)"
+    )
 
     if accept_mode(config) == "score":
+        reasons: list[str] = []
+        if not plausible:
+            reasons.append(pan_reason)
+        if not structural:
+            reasons.append(struct_reason)
         if not refine_ncc_passes(ncc, config):
             reasons.append(f"NCC {ncc:.4f} < {refine_ncc_threshold(config):.2f}")
         return (not reasons), reasons, "score"
 
     high_conf = float(ncc) >= float(config.get("min_match_score", 0.95))
-    corroborated = geometry_corroborated(ecc_scale, edit.zoom_x, config)
     trust_floor = geometry_trust_min_score(config)
-    if not (high_conf or (corroborated and float(ncc) >= trust_floor)):
+    score_ok = high_conf or (corroborated and float(ncc) >= trust_floor) or zoom_only
+
+    reasons = []
+    if not plausible:
+        reasons.append(pan_reason)
+    if not structural and not zoom_only:
+        reasons.append(struct_reason)
+    if not score_ok:
         if not corroborated:
             reasons.append(
                 f"zoom disagree (ecc {ecc_scale:.3f} vs refine {edit.zoom_x:.3f}); NCC {ncc:.4f}"
             )
         else:
             reasons.append(f"NCC {ncc:.4f} < trust floor {trust_floor:.2f}")
-    via = "score" if high_conf else "agreement"
-    return (not reasons), reasons, via
+
+    if reasons:
+        return False, reasons, ""
+    if high_conf:
+        via = "score"
+    elif not structural:  # rescued only by the zoom-only relaxation
+        via = "zoom-only"
+    else:
+        via = "agreement"
+    return True, [], via
 
 
 def assess_clip_match_quality(

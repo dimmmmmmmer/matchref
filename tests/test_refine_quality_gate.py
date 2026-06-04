@@ -84,3 +84,37 @@ def test_score_mode_stays_strict() -> None:
         timeline_size=CANVAS, config=cfg,
     )
     assert not ok  # strict NCC gate (0.90) rejects 0.788
+
+
+def test_zoom_only_trust_accepts_unreframed_corroborated() -> None:
+    """Low-structure big push-in, no reframe, ECC≈refine zoom -> accept zoom-only."""
+    cfg = AppConfig()  # agreement mode
+    edit = ClipEditTransform(zoom_x=2.226, zoom_y=2.226, pan=0.0, tilt=0.0)
+    ok, reasons, via = sample_refine_accepted(
+        ncc=0.60, gradient_ncc=0.38, edit=edit, ecc_scale=2.226,
+        timeline_size=CANVAS, config=cfg,
+    )
+    assert ok, reasons
+    assert via == "zoom-only"
+
+
+def test_zoom_only_does_not_pass_pan_runaway() -> None:
+    """Same low structure but a large pan -> must stay rejected (not zoom-only)."""
+    cfg = AppConfig()
+    edit = ClipEditTransform(zoom_x=1.233, zoom_y=1.233, pan=111.0, tilt=-12.0)
+    ok, _, _ = sample_refine_accepted(
+        ncc=0.60, gradient_ncc=0.33, edit=edit, ecc_scale=1.233,
+        timeline_size=CANVAS, config=cfg,
+    )
+    assert not ok
+
+
+def test_zoom_only_needs_min_gradient() -> None:
+    """Below the zoom-only floor (0.30) even an un-reframed clip is rejected."""
+    cfg = AppConfig()
+    edit = ClipEditTransform(zoom_x=2.83, zoom_y=2.83, pan=0.0, tilt=0.0)
+    ok, _, _ = sample_refine_accepted(
+        ncc=0.55, gradient_ncc=0.25, edit=edit, ecc_scale=2.83,
+        timeline_size=CANVAS, config=cfg,
+    )
+    assert not ok
