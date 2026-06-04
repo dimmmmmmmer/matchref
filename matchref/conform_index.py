@@ -307,10 +307,16 @@ class OfflineFrameResolver:
 
     def _offline_from_resolve(self, resolve_frame: int) -> int:
         ref_origin = 0
-        extra = int(self.config.get("offline_timeline_offset_frames", 0))
+        # offline_timeline_offset_frames must be applied exactly once. When a conform
+        # is loaded it already folded the config value into _timeline_offset_frames
+        # (see ConformIndex.load), so use that — otherwise read the config directly.
+        # Adding both double-counts the offset for clips that fall through to the
+        # timeline mapping while a conform is present (e.g. stock clips not in the XML).
         if self.conform is not None:
             ref_origin = self.conform._reference_origin_frames
-            extra += self.conform._timeline_offset_frames
+            extra = self.conform._timeline_offset_frames
+        else:
+            extra = int(self.config.get("offline_timeline_offset_frames", 0))
         return hub_to_lock_cut_frame(
             resolve_frame,
             lock_cut_hub_origin=self.lock_cut_hub_origin,

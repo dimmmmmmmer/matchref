@@ -19,3 +19,18 @@ def test_three_points() -> None:
     cfg.set("match_sample_mode", "three")
     pts = sample_points_for_clip(76, config=cfg)
     assert len(pts) == 3
+
+
+def test_mid_rounds_half_up_for_odd_duration() -> None:
+    # round(duration/2): 155 -> 78 (was 77 with floor division).
+    cfg = AppConfig()
+    cfg.set("match_sample_mode", "three")
+    pts = sample_points_for_clip(155, config=cfg)
+    assert pts[1] == (SamplePoint.MID, 78)
+
+
+def test_mid_clamped_for_tiny_clips() -> None:
+    cfg = AppConfig()
+    cfg.set("match_sample_mode", "three")
+    assert sample_points_for_clip(1, config=cfg)[1] == (SamplePoint.MID, 0)
+    assert sample_points_for_clip(2, config=cfg)[1] == (SamplePoint.MID, 1)

@@ -103,12 +103,30 @@ def prepare_gray_float(image: np.ndarray, max_width: int) -> np.ndarray:
     return gray
 
 
-def prepare_gray_uint8(image: np.ndarray, max_width: int, *, use_clahe: bool = True) -> np.ndarray:
-    gray = _even_crop(_to_gray(image, max_width))
-    if not use_clahe:
-        return gray.astype(np.uint8)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    return clahe.apply(gray.astype(np.uint8))
+def prepare_gray_uint8(
+    image: np.ndarray,
+    max_width: int,
+    *,
+    use_clahe: bool = True,
+    edge_emphasis: float = 0.0,
+) -> np.ndarray:
+    gray = _even_crop(_to_gray(image, max_width)).astype(np.uint8)
+    if use_clahe:
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        gray = clahe.apply(gray)
+    if edge_emphasis > 0.0:
+        # Blend in Sobel gradient magnitude. Edges survive a colour grade almost
+        # unchanged, so this makes the correlation depend on shared structure
+        # rather than absolute luminance (which the offline grade shifts wildly).
+        blur = cv2.GaussianBlur(gray, (3, 3), 0)
+        gx = cv2.Sobel(blur, cv2.CV_32F, 1, 0, ksize=3)
+        gy = cv2.Sobel(blur, cv2.CV_32F, 0, 1, ksize=3)
+        mag = cv2.magnitude(gx, gy)
+        cv2.normalize(mag, mag, 0.0, 255.0, cv2.NORM_MINMAX)
+        w = min(1.0, max(0.0, edge_emphasis))
+        gray = cv2.addWeighted(gray.astype(np.float32), 1.0 - w, mag, w, 0.0)
+        gray = np.clip(gray, 0.0, 255.0).astype(np.uint8)
+    return gray
 
 
 def decompose_affine(warp_matrix: np.ndarray, image_shape: tuple[int, int]) -> tuple[float, float, float, float]:
@@ -156,9 +174,19 @@ def _prepare_match_pair(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, ContentCrop]:
     """Crop overlay margins on both frames; ECC mask only needed when not pre-cropped."""
     margins = overlay_margins_fraction(config)
-    use_clahe = not is_maximum_precision(config)
-    off_gray = prepare_gray_uint8(offline_frame, max_width, use_clahe=use_clahe)
-    on_gray = prepare_gray_uint8(online_frame, max_width, use_clahe=use_clahe)
+    # The offline lock-cut is colour-graded; the online source is raw/log. Matching
+    # on raw luminance makes ECC score low for clips that are geometrically identical
+    # (e.g. a fire scene that was never reframed), so the grade-robust refine never
+    # runs. CLAHE (local-contrast equalisation) + optional edge emphasis cancel the
+    # grade so the admission score reflects geometry, not colour.
+    use_clahe = bool(config.get("match_use_clahe", True))
+    edge_emphasis = float(config.get("match_edge_emphasis", 0.0))
+    off_gray = prepare_gray_uint8(
+        offline_frame, max_width, use_clahe=use_clahe, edge_emphasis=edge_emphasis
+    )
+    on_gray = prepare_gray_uint8(
+        online_frame, max_width, use_clahe=use_clahe, edge_emphasis=edge_emphasis
+    )
     on_gray, off_gray = _match_size(on_gray, off_gray)
     crop = content_crop_for_shape(off_gray.shape[0], off_gray.shape[1], margins)
     full_frame = (

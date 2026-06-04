@@ -98,11 +98,25 @@ class EditTransformApplier:
         baseline = baseline_from_result(result)
         compose_bl = baseline if compose_result_with_baseline(self.config) else None
         sorted_samples = sorted(ok_samples, key=lambda s: s.clip_local_frame)
-        use_median = (
-            bool(self.config.get("apply_median_transform", False))
-            and len(sorted_samples) >= 2
-        )
-        if use_median:
+
+        select = str(self.config.get("apply_transform_select", "best")).lower()
+        if bool(self.config.get("apply_median_transform", False)) and len(sorted_samples) >= 2:
+            select = "median"  # back-compat
+
+        if select == "best":
+            # Reframe is static across the clip, so apply the single sample that
+            # matched best (highest score) rather than averaging — the median would
+            # be dragged toward a weak frame (motion blur, flame flicker, occlusion).
+            best = max(ok_samples, key=lambda s: s.ecc_score)
+            last_resolved = resolve_transform(best, self.config, self._size, baseline=compose_bl)
+            sorted_samples = [best]
+            self.logger.info(
+                "Apply select: best of %d sample(s) — %s (score %.4f)",
+                len(ok_samples),
+                best.sample_point.value,
+                best.ecc_score,
+            )
+        elif select == "median" and len(sorted_samples) >= 2:
             last_resolved = self._median_resolved(sorted_samples, compose_bl)
         else:
             last_resolved = resolve_transform(

@@ -28,6 +28,36 @@ def refine_ncc_passes(ncc: float, config: AppConfig) -> bool:
     return float(ncc) >= refine_ncc_threshold(config)
 
 
+def scale_spread(scales: list[float]) -> tuple[float, float, float]:
+    """(min, max, max/min) of a set of zoom estimates; ratio 1.0 if fewer than two."""
+    vals = [float(s) for s in scales]
+    if len(vals) < 2:
+        v = vals[0] if vals else 1.0
+        return v, v, 1.0
+    lo, hi = min(vals), max(vals)
+    return lo, hi, (hi / lo if lo > 1e-6 else 999.0)
+
+
+def max_scale_spread(config: AppConfig) -> float:
+    return float(config.get("max_scale_spread_ratio", 1.35))
+
+
+def ecc_consensus_passes(scales: list[float], rep_score: float, config: AppConfig) -> bool:
+    """Accept a low-structure clip on ECC geometry alone.
+
+    Smoke/sky/fire shots can fail every per-sample refine yet have a correct,
+    stable ECC zoom. When enough independent frames agree on a plausible zoom and
+    the best of them clears the geometry-trust floor, the geometry is corroborated
+    even though NCC/structure are weak.
+    """
+    need = int(config.get("ecc_consensus_min_samples", 2))
+    if len(scales) < need:
+        return False
+    _, _, spread = scale_spread(scales)
+    trust_floor = float(config.get("geometry_trust_min_score", 0.7))
+    return spread <= max_scale_spread(config) and float(rep_score) >= trust_floor
+
+
 def refine_gradient_floor(config: AppConfig) -> float:
     """Min structural (gradient-domain) agreement to accept a refine result."""
     return float(config.get("refine_min_gradient_ncc", 0.4))
@@ -63,6 +93,87 @@ def refine_edit_plausible(
     return abs(float(edit.pan)) <= limit and abs(float(edit.tilt)) <= limit
 
 
+def accept_mode(config: AppConfig) -> str:
+    """'agreement' trusts corroborated geometry; 'score' is the strict NCC gate."""
+    return str(config.get("accept_mode", "agreement")).lower()
+
+
+def geometry_trust_min_score(config: AppConfig) -> float:
+    """Lowest match score still accepted when the geometry is independently corroborated."""
+    return float(config.get("geometry_trust_min_score", 0.70))
+
+
+def geometry_agreement_zoom_tol(config: AppConfig) -> float:
+    """Max relative disagreement between two independent zoom estimates to call it corroborated."""
+    return float(config.get("geometry_agreement_zoom_tol", 0.04))
+
+
+def geometry_corroborated(ecc_scale: float, refine_zoom: float, config: AppConfig) -> bool:
+    """
+    Whether the pyramid-ECC zoom and the Resolve-Edit refine zoom agree.
+
+    Caveat: the refine is *seeded* from the ECC warp, so on low-structure content
+    where the refine barely moves this largely re-confirms the seed rather than
+    being a fully independent estimate. It is corroboration, not proof — samples
+    accepted on this basis are tagged "agreement" so they can be eyeballed
+    (see difference.jpg / near-black%).
+    """
+    a, b = float(ecc_scale), float(refine_zoom)
+    if a <= 0.0 or b <= 0.0:
+        return False
+    return abs(a / b - 1.0) <= geometry_agreement_zoom_tol(config)
+
+
+def sample_refine_accepted(
+    *,
+    ncc: float,
+    gradient_ncc: float,
+    edit: ClipEditTransform,
+    ecc_scale: float,
+    timeline_size: tuple[int, int],
+    config: AppConfig,
+) -> tuple[bool, list[str], str]:
+    """
+    Decide whether a single refined sample is good enough to keep.
+
+    Returns (accepted, reasons, accept_via) where accept_via is "score" (cleared the
+    strict NCC bar) or "agreement" (lower trust floor + corroborated geometry).
+
+    score mode:      strict — NCC >= refine threshold, structure floor, plausible.
+    agreement mode:  plausible + structural + (high NCC OR corroborated geometry at a
+                     lower trust floor). This keeps geometrically-correct matches that
+                     a grade/smoke/fire legitimately caps below the strict NCC bar.
+    """
+    reasons: list[str] = []
+    plausible = refine_edit_plausible(edit, timeline_size, config)
+    structural = refine_structure_passes(gradient_ncc, config)
+    if not plausible:
+        lim = max_refine_pan_tilt_pixels(timeline_size, config)
+        reasons.append(f"pan/tilt {edit.pan:.0f},{edit.tilt:.0f} exceed {lim:.0f}px")
+    if not structural:
+        reasons.append(
+            f"structure {gradient_ncc:.3f} < {refine_gradient_floor(config):.2f} (intensity-only match)"
+        )
+
+    if accept_mode(config) == "score":
+        if not refine_ncc_passes(ncc, config):
+            reasons.append(f"NCC {ncc:.4f} < {refine_ncc_threshold(config):.2f}")
+        return (not reasons), reasons, "score"
+
+    high_conf = float(ncc) >= float(config.get("min_match_score", 0.95))
+    corroborated = geometry_corroborated(ecc_scale, edit.zoom_x, config)
+    trust_floor = geometry_trust_min_score(config)
+    if not (high_conf or (corroborated and float(ncc) >= trust_floor)):
+        if not corroborated:
+            reasons.append(
+                f"zoom disagree (ecc {ecc_scale:.3f} vs refine {edit.zoom_x:.3f}); NCC {ncc:.4f}"
+            )
+        else:
+            reasons.append(f"NCC {ncc:.4f} < trust floor {trust_floor:.2f}")
+    via = "score" if high_conf else "agreement"
+    return (not reasons), reasons, via
+
+
 def assess_clip_match_quality(
     ok_samples: list[TransformSample],
     config: AppConfig,
@@ -92,12 +203,9 @@ def assess_clip_match_quality(
         return len(reasons) == 0, reasons
 
     if len(scales) >= 2:
-        lo, hi = min(scales), max(scales)
-        if lo > 1e-6:
-            spread = hi / lo
-            max_spread = float(config.get("max_scale_spread_ratio", 1.35))
-            if spread > max_spread:
-                reasons.append(f"scale varies {lo:.3f}…{hi:.3f} (×{spread:.2f})")
+        lo, hi, spread = scale_spread(scales)
+        if spread > max_scale_spread(config):
+            reasons.append(f"scale varies {lo:.3f}…{hi:.3f} (×{spread:.2f})")
 
     if len(ok_samples) >= 2:
         pos_threshold = float(config.get("transform_variance_threshold", 0.02))

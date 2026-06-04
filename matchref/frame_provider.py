@@ -183,6 +183,9 @@ def sample_points_for_clip(
       - every_n: use sample_every_n_frames
     """
     duration = max(1, int(duration_frames))
+    # round(duration/2), half-up, clamped to a valid local index [0, duration-1].
+    # Keeps the sampled mid frame at the true clip centre regardless of even/odd length.
+    mid = min(max(0, (duration + 1) // 2), duration - 1)
     mode = "three"
     if config is not None:
         mode = str(config.get("match_sample_mode", "single")).lower()
@@ -195,7 +198,7 @@ def sample_points_for_clip(
             local = max(0, duration - 1)
             point = SamplePoint.END
         else:
-            local = duration // 2
+            local = mid
             point = SamplePoint.MID
         return [(point, local)]
 
@@ -213,7 +216,6 @@ def sample_points_for_clip(
                 points.append((SamplePoint.MID, idx))
         return points
 
-    mid = duration // 2
     end = max(0, duration - 1)
     return [
         (SamplePoint.START, 0),
@@ -247,13 +249,48 @@ def resolve_media_path(media_pool_item: Any) -> str:
 def source_frame_for_local(
     timeline_item: Any,
     local_frame: int,
+    *,
+    config: AppConfig | None = None,
 ) -> int:
-    """Map clip-local frame to source media frame."""
+    """Map clip-local frame to source media frame.
+
+    Without retime the timeline advances 1:1 with the source, so
+    ``source_start + local_frame`` is exact. Retimed clips (slow/fast motion,
+    reverse) break that assumption: the source in/out span no longer equals the
+    timeline duration. When ``retime_aware_source_mapping`` is enabled we
+    linearly interpolate the source frame from the clip's source span versus its
+    timeline duration, which is exact for constant-speed retimes (including
+    reverse) and a reasonable approximation for speed ramps.
+    """
     try:
         source_start = int(timeline_item.GetSourceStartFrame())
     except Exception:
         source_start = 0
-    return source_start + int(local_frame)
+
+    local = int(local_frame)
+    enabled = True if config is None else bool(config.get("retime_aware_source_mapping", True))
+    if not enabled:
+        return source_start + local
+
+    try:
+        source_end = int(timeline_item.GetSourceEndFrame())
+    except Exception:
+        return source_start + local
+    try:
+        duration = int(timeline_item.GetDuration())
+    except Exception:
+        duration = 0
+
+    if duration <= 1:
+        return source_start
+    src_span = source_end - source_start
+    # No retime (or span unavailable): identical to the 1:1 mapping. Tolerate a
+    # 1-frame difference so we don't misread Resolve's inclusive-vs-exclusive
+    # GetSourceEndFrame convention as a tiny retime.
+    if src_span == 0 or abs(src_span - (duration - 1)) <= 1:
+        return source_start + local
+    ratio = src_span / float(duration - 1)
+    return source_start + int(round(local * ratio))
 
 
 def timeline_frame_for_local(timeline_item: Any, local_frame: int) -> int:

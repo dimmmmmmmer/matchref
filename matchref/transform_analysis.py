@@ -42,15 +42,13 @@ from matchref.lock_cut_align import (
 from matchref.logging_report import log_sample
 from matchref.match_quality import (
     assess_clip_match_quality,
-    max_refine_pan_tilt_pixels,
+    ecc_consensus_passes,
+    max_scale_spread,
     min_ecc_for_refine_attempt,
     refine_early_exit_enabled,
-    refine_edit_plausible,
-    refine_gradient_floor,
-    refine_ncc_passes,
-    refine_ncc_threshold,
-    refine_structure_passes,
+    sample_refine_accepted,
     sample_score_passes,
+    scale_spread,
     score_from_refine_ncc,
 )
 from matchref.models import AnalysisReport, ClipAnalysisResult, SamplePoint, TransformSample
@@ -99,7 +97,6 @@ class TransformAnalyzer:
                     "For reel/record mapping, set Conform XML in GUI."
                 )
 
-        self._ecc_threshold = float(self.config.get("ecc_threshold", 0.95))
         self._variance_threshold = float(self.config.get("transform_variance_threshold", 0.02))
         self._sample_n = int(self.config.get("sample_every_n_frames", 0))
         self._debug_dir: Path | None = None
@@ -287,6 +284,20 @@ class TransformAnalyzer:
             )
 
         control_points = sample_points_for_clip(meta["duration"], sample_n, config=self.config)
+        # When we only keep the single best sample (apply_transform_select="best"),
+        # refining every sample is wasted work: try the mid frame first (most
+        # representative of a shot) so a confident match lets us stop early.
+        stop_on_confident = (
+            str(self.config.get("apply_transform_select", "best")).lower() == "best"
+            and bool(self.config.get("refine_stop_on_confident_sample", True))
+        )
+        confident_score = float(self.config.get("confident_sample_score", 0.96))
+        min_scale_apply = float(self.config.get("min_alignment_scale", 0.4))
+        max_scale_apply = float(self.config.get("max_alignment_scale", 2.5))
+        if stop_on_confident and len(control_points) > 1:
+            control_points = sorted(
+                control_points, key=lambda cp: 0 if cp[0] == SamplePoint.MID else 1
+            )
         base_scale = float(
             self.config.get("transform_base_scale", self.config.get("fusion_base_size", 1.0))
         )
@@ -297,10 +308,28 @@ class TransformAnalyzer:
             self.config.get("transform_base_angle", self.config.get("fusion_base_angle", 0.0))
         )
 
+        # Match base values are loop-invariant (config only); hoist so both the
+        # accept path and the ECC-consensus rescue derive transforms identically.
+        if is_absolute_edit_match(self.config):
+            match_base_scale = 1.0
+            match_base_center = (0.0, 0.0)
+            match_base_angle = 0.0
+        else:
+            match_base_scale = base_scale
+            match_base_center = (float(base_center[0]), float(base_center[1]))
+            match_base_angle = base_angle
+
         transform_vectors: list[tuple[float, float, float, float]] = []
+        # Samples whose refine was rejected but whose direct ECC alignment is
+        # plausible. Used to rescue low-structure clips (smoke/sky) where the ECC
+        # zoom is reliable and corroborated across frames but the refine search and
+        # the structure gate are not.
+        ecc_candidates: list[TransformSample] = []
 
         for point, local_frame in control_points:
-            src = build_clip_source_info(timeline_item, local_frame, result.clip_name)
+            src = build_clip_source_info(
+                timeline_item, local_frame, result.clip_name, config=self.config
+            )
             mapping = self.frames.offline_resolver.resolve(
                 timeline_frame=src.timeline_frame,
                 reel_name=src.reel_name,
@@ -508,29 +537,36 @@ class TransformAnalyzer:
                     rot_note,
                     refine_outcome.ncc,
                 )
-                refine_ok = (
-                    refine_ncc_passes(refine_outcome.ncc, self.config)
-                    and refine_edit_plausible(refine_outcome.edit, canvas, self.config)
-                    and refine_structure_passes(refine_outcome.gradient_ncc, self.config)
+                refine_ok, reasons, accept_via = sample_refine_accepted(
+                    ncc=refine_outcome.ncc,
+                    gradient_ncc=refine_outcome.gradient_ncc,
+                    edit=refine_outcome.edit,
+                    ecc_scale=alignment.scale,
+                    timeline_size=canvas,
+                    config=self.config,
                 )
+                if refine_ok:
+                    sample.accept_via = accept_via
                 if not refine_ok:
-                    reasons: list[str] = []
-                    if not refine_ncc_passes(refine_outcome.ncc, self.config):
-                        reasons.append(
-                            f"NCC {refine_outcome.ncc:.4f} < {refine_ncc_threshold(self.config):.2f}"
-                        )
-                    if not refine_structure_passes(refine_outcome.gradient_ncc, self.config):
-                        reasons.append(
-                            f"structure {refine_outcome.gradient_ncc:.3f} < "
-                            f"{refine_gradient_floor(self.config):.2f} (intensity-only match)"
-                        )
-                    if not refine_edit_plausible(refine_outcome.edit, canvas, self.config):
-                        lim = max_refine_pan_tilt_pixels(canvas, self.config)
-                        reasons.append(
-                            f"pan/tilt {refine_outcome.edit.pan:.0f},{refine_outcome.edit.tilt:.0f} "
-                            f"exceed {lim:.0f}px"
-                        )
                     sample.message = "refine rejected: " + "; ".join(reasons)
+                    # The refine wandered, but the direct ECC alignment may still be
+                    # right (common on low-structure smoke/sky). Stash its geometry so
+                    # cross-sample consensus can rescue the clip; drop the bad refined
+                    # edit so apply falls back to the ECC warp, not the wandered zoom.
+                    ecc_scale, ecc_px, ecc_py, ecc_ang = apply_match_flags(
+                        alignment,
+                        self.config,
+                        base_scale=match_base_scale,
+                        base_center=match_base_center,
+                        base_angle=match_base_angle,
+                    )
+                    if min_scale_apply <= float(ecc_scale) <= max_scale_apply:
+                        sample.refined_edit = None
+                        sample.scale = ecc_scale
+                        sample.position_x = ecc_px
+                        sample.position_y = ecc_py
+                        sample.rotation_deg = ecc_ang
+                        ecc_candidates.append(sample)
                     result.samples.append(sample)
                     result.warnings.append(f"{point.value}: {sample.message}")
                     self._save_match_debug(
@@ -549,14 +585,6 @@ class TransformAnalyzer:
                     )
                     continue
 
-            if absolute:
-                match_base_scale = 1.0
-                match_base_center = (0.0, 0.0)
-                match_base_angle = 0.0
-            else:
-                match_base_scale = base_scale
-                match_base_center = (float(base_center[0]), float(base_center[1]))
-                match_base_angle = base_angle
             scale, pos_x, pos_y, angle = apply_match_flags(
                 alignment,
                 self.config,
@@ -569,6 +597,8 @@ class TransformAnalyzer:
             sample.position_y = pos_y
             sample.rotation_deg = angle
             sample.ok = True
+            if not sample.accept_via:
+                sample.accept_via = "score"  # ECC cleared threshold; no refine needed
             transform_vectors.append((scale, pos_x, pos_y, angle))
             result.samples.append(sample)
             log_sample(self.logger, result.clip_name, sample)
@@ -588,9 +618,94 @@ class TransformAnalyzer:
                 apply_floor,
             )
 
+            if (
+                stop_on_confident
+                and float(sample.ecc_score) >= confident_score
+                and min_scale_apply <= float(sample.scale) <= max_scale_apply
+            ):
+                self.logger.info(
+                    "[%s %s] confident match (score %.4f >= %.2f) — skipping remaining samples",
+                    result.clip_name,
+                    point.value,
+                    sample.ecc_score,
+                    confident_score,
+                )
+                break
+
         ok_samples = [s for s in result.samples if s.ok]
+
+        # ECC-consensus rescue: low-structure shots (smoke, fire, flat sky) can fail
+        # every per-sample refine (the search wanders, the structure gate trips) yet
+        # have a correct, stable ECC zoom across independent frames. When no sample
+        # passed but ≥2 rejected samples agree on a plausible ECC zoom — and the best
+        # of them clears the geometry-trust floor — trust that geometry and apply it.
+        if (
+            not ok_samples
+            and ecc_candidates
+            and bool(self.config.get("ecc_consensus_rescue", True))
+        ):
+            scales = [float(s.scale) for s in ecc_candidates]
+            rep = max(ecc_candidates, key=lambda s: float(s.ecc_score))
+            if ecc_consensus_passes(scales, float(rep.ecc_score), self.config):
+                lo, hi = min(scales), max(scales)
+                rep.ok = True
+                rep.accept_via = "consensus"
+                rep.message = (
+                    f"ECC-consensus rescue: {len(ecc_candidates)} samples agree on "
+                    f"zoom {lo:.3f}…{hi:.3f} (refine/structure unreliable on low-structure content)"
+                )
+                ok_samples = [rep]
+                result.warnings.append(rep.message)
+                self.logger.info("Quality check: %s — %s", result.clip_name, rep.message)
         min_ok = self._min_ok_samples_required()
-        if len(ok_samples) >= min_ok:
+        select_best = str(self.config.get("apply_transform_select", "best")).lower() == "best"
+        if ok_samples and select_best:
+            # Keep the single best-matching sample; validate only its scale (the
+            # others may be weaker frames — we just don't use them). No keyframing.
+            best = max(ok_samples, key=lambda s: s.ecc_score)
+            min_scale = float(self.config.get("min_alignment_scale", 0.4))
+            max_scale = float(self.config.get("max_alignment_scale", 2.5))
+            reasons: list[str] = []
+            if not (min_scale <= best.scale <= max_scale):
+                reasons.append(
+                    f"best sample scale {best.scale:.3f} outside [{min_scale}, {max_scale}]"
+                )
+            # Cross-sample corroboration: if several samples survived, their zoom must
+            # agree — independent frames landing on the same zoom is strong evidence the
+            # geometry is right (and rules out a single-frame fluke).
+            if len(ok_samples) >= 2:
+                lo, hi, spread = scale_spread([s.scale for s in ok_samples])
+                if spread > max_scale_spread(self.config):
+                    reasons.append(
+                        f"samples disagree on zoom {lo:.3f}…{hi:.3f} (×{spread:.2f})"
+                    )
+            result.problem = bool(reasons)
+            for msg in reasons:
+                result.warnings.append(msg)
+                self.logger.warning("Quality check: %s — %s", result.clip_name, msg)
+            if not result.problem:
+                via = best.accept_via or "score"
+                if via == "score":
+                    self.logger.info(
+                        "Best sample: %s score %.4f (of %d ok)",
+                        best.sample_point.value,
+                        best.ecc_score,
+                        len(ok_samples),
+                    )
+                else:
+                    # Not a strict-score match — geometry trusted via corroboration or
+                    # cross-sample consensus. Flag it so it gets an eyeball check.
+                    note = f"accepted via {via} (verify difference.jpg / near-black%)"
+                    result.warnings.append(note)
+                    self.logger.warning(
+                        "Best sample: %s score %.4f via %s — %s",
+                        best.sample_point.value,
+                        best.ecc_score,
+                        via,
+                        "geometry trusted, eyeball recommended",
+                    )
+            result.use_mid_key = False
+        elif len(ok_samples) >= min_ok:
             passed, fail_reasons = assess_clip_match_quality(ok_samples, self.config)
             result.problem = not passed
             for reason in fail_reasons:
@@ -637,8 +752,9 @@ class TransformAnalyzer:
         if self._debug_dir is None:
             return
         if sample.ok:
+            via = sample.accept_via or "score"
             match_line = (
-                f"match: OK scale={sample.scale:.4f} rot={sample.rotation_deg:.2f} "
+                f"match: OK [{via}] scale={sample.scale:.4f} rot={sample.rotation_deg:.2f} "
                 f"ecc={sample.ecc_score:.4f} (apply min {apply_floor:.2f}) — {sample.message}"
             )
         else:
@@ -739,6 +855,9 @@ class TransformAnalyzer:
 
     def _min_ok_samples_required(self) -> int:
         if str(self.config.get("match_sample_mode", "single")).lower() == "single":
+            return 1
+        # "best" picks the single best-matching sample, so one good sample is enough.
+        if str(self.config.get("apply_transform_select", "best")).lower() == "best":
             return 1
         return int(self.config.get("min_ok_samples_per_clip", 2))
 

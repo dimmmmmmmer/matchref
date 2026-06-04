@@ -43,6 +43,7 @@ class TransformSample:
     message: str = ""
     warp_matrix: Any = None
     refined_edit: Any = None  # ClipEditTransform when Resolve Edit search used
+    accept_via: str = ""  # "score" | "agreement" | "consensus" — how it was accepted
 
 
 @dataclass

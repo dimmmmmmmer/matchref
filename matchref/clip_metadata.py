@@ -80,7 +80,13 @@ def source_timecode_from_item(
     return None
 
 
-def build_clip_source_info(timeline_item: Any, local_frame: int, clip_name: str = "") -> ClipSourceInfo:
+def build_clip_source_info(
+    timeline_item: Any,
+    local_frame: int,
+    clip_name: str = "",
+    *,
+    config: Any | None = None,
+) -> ClipSourceInfo:
     media_item = None
     try:
         media_item = timeline_item.GetMediaPoolItem()
@@ -97,7 +103,7 @@ def build_clip_source_info(timeline_item: Any, local_frame: int, clip_name: str 
     media_path = resolve_media_path(media_item)
     media_basename = Path(media_path).stem if media_path else ""
     reel = reel_name_from_item(timeline_item, media_item, name, media_path)
-    source_frame = source_frame_for_local(timeline_item, local_frame)
+    source_frame = source_frame_for_local(timeline_item, local_frame, config=config)
     timeline_frame = timeline_frame_for_local(timeline_item, local_frame)
     tc = source_timecode_from_item(timeline_item, media_item, local_frame)
 
