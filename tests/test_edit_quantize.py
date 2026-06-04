@@ -9,6 +9,8 @@ def test_snap_small_pan() -> None:
     cfg = AppConfig()
     cfg.set("edit_priority_zoom", True)
     cfg.set("snap_pan_tilt_below_pixels", 2.0)
+    cfg.set("edit_round_mode", "nearest")  # explicit: this test checks snapping, not round dir
+    cfg.set("edit_zoom_decimal_places", 4)
     out = quantize_clip_edit(
         ClipEditTransform(zoom_x=1.23456789, pan=0.4, tilt=-1.1, rotation_deg=0.01),
         cfg,

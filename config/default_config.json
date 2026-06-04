@@ -74,6 +74,7 @@
   "edit_zoom_decimal_places": 4,
   "edit_pan_decimal_places": 1,
   "edit_rotation_decimal_places": 2,
+  "edit_round_mode": "nearest",
   "compensate_clip_transform": false,
   "lock_cut_hub_origin_frame": -1,
   "compose_with_clip_transform": false,
