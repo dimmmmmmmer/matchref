@@ -28,6 +28,7 @@
   "refine_stage_passes": 4,
   "refine_max_width": 1920,
   "refine_fine_polish": true,
+  "input_scaling": "fit",
   "match_use_clahe": false,
   "refine_zoom_steps": [0.03, 0.01, 0.002, 0.0005],
   "refine_pan_steps": [12, 4, 1, 0.25],

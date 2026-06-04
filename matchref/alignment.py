@@ -439,6 +439,7 @@ def align_frames(
             online_frame,
             offline_frame,
             timeline_size,
+            str(config.get("input_scaling", "fit")),
         )
 
     try:

@@ -320,7 +320,12 @@ class TransformAnalyzer:
                 and should_simulate_edit_for_match(baseline, canvas_size, self.config)
             )
             if online_raw is not None and absolute:
-                online = _fit_frame_to_canvas(online_raw, canvas_size[0], canvas_size[1])
+                online = _fit_frame_to_canvas(
+                    online_raw,
+                    canvas_size[0],
+                    canvas_size[1],
+                    str(self.config.get("input_scaling", "fit")),
+                )
             else:
                 online = online_raw
                 if online is not None and compensate:

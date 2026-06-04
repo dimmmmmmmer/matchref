@@ -31,6 +31,7 @@ def normalize_to_canvas(
     online: np.ndarray,
     offline: np.ndarray,
     canvas_size: tuple[int, int],
+    mode: str = "fit",
 ) -> tuple[np.ndarray, np.ndarray]:
     """Fit online to timeline raster; resize offline if needed."""
     width, height = int(canvas_size[0]), int(canvas_size[1])
@@ -38,7 +39,7 @@ def normalize_to_canvas(
         return online, offline
     on = online
     if on.shape[1] != width or on.shape[0] != height:
-        on = _fit_frame_to_canvas(on, width, height)
+        on = _fit_frame_to_canvas(on, width, height, mode)
     off = offline
     if off.shape[1] != width or off.shape[0] != height:
         off = cv2.resize(off, (width, height), interpolation=cv2.INTER_AREA)

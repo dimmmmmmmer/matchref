@@ -55,18 +55,48 @@ def read_clip_edit_transform(timeline_item: Any) -> ClipEditTransform:
     )
 
 
-def _fit_frame_to_canvas(frame: np.ndarray, width: int, height: int) -> np.ndarray:
+def _fit_frame_to_canvas(
+    frame: np.ndarray, width: int, height: int, mode: str = "fit"
+) -> np.ndarray:
+    """
+    Place a source frame onto the timeline canvas the way Resolve does at Zoom=1.0.
+
+    ``mode`` mirrors Resolve's "Mismatched Resolution Files" project setting:
+      - ``fit``     — scale the whole image to fit (letter/pillarbox). Default.
+      - ``fill``    — scale to fill the frame, cropping the overflow.
+      - ``stretch`` — stretch to all corners (ignores aspect).
+      - ``none``    — center with no resize (crop/pad).
+    Picking the wrong mode offsets every clip's Zoom by the fill/fit ratio
+    (e.g. ×1.125 for a 16:9 source on a 2:1 timeline).
+    """
     h, w = frame.shape[:2]
     if w <= 0 or h <= 0:
         raise ValueError("empty frame")
     canvas = np.zeros((height, width, 3), dtype=np.uint8)
-    scale = min(width / w, height / h)
+    mode = str(mode).lower()
+
+    if mode == "stretch":
+        return cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
+
+    if mode == "none":
+        scale = 1.0
+    elif mode == "fill":
+        scale = max(width / w, height / h)
+    else:  # fit
+        scale = min(width / w, height / h)
+
     new_w = max(1, int(round(w * scale)))
     new_h = max(1, int(round(h * scale)))
     resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
-    x0 = (width - new_w) // 2
-    y0 = (height - new_h) // 2
-    canvas[y0 : y0 + new_h, x0 : x0 + new_w] = resized
+
+    # center: crop if larger than canvas (fill/none), pad if smaller (fit/none)
+    sx = (new_w - width) // 2
+    sy = (new_h - height) // 2
+    cx0, cy0 = max(0, sx), max(0, sy)
+    dx0, dy0 = max(0, -sx), max(0, -sy)
+    cw = min(new_w - cx0, width - dx0)
+    ch = min(new_h - cy0, height - dy0)
+    canvas[dy0 : dy0 + ch, dx0 : dx0 + cw] = resized[cy0 : cy0 + ch, cx0 : cx0 + cw]
     return canvas
 
 
@@ -125,7 +155,9 @@ def apply_clip_edit_to_frame(
     width, height = int(canvas_size[0]), int(canvas_size[1])
     if width <= 0 or height <= 0:
         return frame
-    canvas = _fit_frame_to_canvas(frame, width, height)
+    canvas = _fit_frame_to_canvas(
+        frame, width, height, str(config.get("input_scaling", "fit"))
+    )
     if (
         abs(edit.zoom - 1.0) < 1e-4
         and abs(edit.pan) < 1e-3
