@@ -37,6 +37,7 @@ class RefineOutcome:
     ncc: float
     used_position: bool
     strategy: str
+    gradient_ncc: float = 0.0  # structural agreement; low = intensity-only false match
 
 
 @dataclass

@@ -28,6 +28,16 @@ def refine_ncc_passes(ncc: float, config: AppConfig) -> bool:
     return float(ncc) >= refine_ncc_threshold(config)
 
 
+def refine_gradient_floor(config: AppConfig) -> float:
+    """Min structural (gradient-domain) agreement to accept a refine result."""
+    return float(config.get("refine_min_gradient_ncc", 0.4))
+
+
+def refine_structure_passes(gradient_ncc: float, config: AppConfig) -> bool:
+    """Reject intensity-only false matches (grade-similar but geometrically wrong)."""
+    return float(gradient_ncc) >= refine_gradient_floor(config)
+
+
 def min_ecc_for_refine_attempt(config: AppConfig) -> float:
     return float(config.get("min_ecc_for_refine_attempt", 0.70))
 

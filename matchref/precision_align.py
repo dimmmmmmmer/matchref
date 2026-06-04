@@ -221,6 +221,7 @@ def refine_resolve_edit(
             ncc=coarse.ncc,
             used_position=coarse.used_position,
             strategy=coarse.strategy,
+            gradient_ncc=coarse.gradient_ncc,
         )
     return _refine_at_canvas(online_raw, offline_ref, canvas_size, config, initial, warp)
 
@@ -307,11 +308,18 @@ def _fine_polish(
         ClipEditTransform(state[0], state[0], state[1], state[2], state[3] if use_rot else 0.0),
         config,
     )
-    score = ref.score(_render_with_edit(online_raw, final, canvas_size, config))
+    final_render = _render_with_edit(online_raw, final, canvas_size, config)
+    score = ref.score(final_render)
     used_position = abs(final.pan) >= float(config.get("snap_pan_tilt_below_pixels", 2.0)) or abs(
         final.tilt
     ) >= float(config.get("snap_pan_tilt_below_pixels", 2.0))
-    return RefineOutcome(edit=final, ncc=score, used_position=used_position, strategy=f"{strategy}+fine")
+    return RefineOutcome(
+        edit=final,
+        ncc=score,
+        used_position=used_position,
+        strategy=f"{strategy}+fine",
+        gradient_ncc=ref.gradient_ncc(final_render),
+    )
 
 
 def _refine_at_canvas(
@@ -349,7 +357,7 @@ def _refine_at_canvas(
             return 1e12
 
     if use_multi_strategy_refine(config):
-        return refine_multi_strategy(
+        outcome = refine_multi_strategy(
             online_raw=online_raw,
             offline_fit=offline_fit,
             canvas_size=canvas_size,
@@ -358,6 +366,10 @@ def _refine_at_canvas(
             cost_fn=lambda p: cost_full(p[0], p[1], p[2], p[3]),
             score_fn=ref.score,
         )
+        outcome.gradient_ncc = ref.gradient_ncc(
+            _render_with_edit(online_raw, outcome.edit, canvas_size, config)
+        )
+        return outcome
 
     zoom = float(initial.zoom_x)
     pan = float(initial.pan)
@@ -455,6 +467,7 @@ def _refine_at_canvas(
         ncc=score,
         used_position=used_position,
         strategy=strategy,
+        gradient_ncc=ref.gradient_ncc(rendered),
     )
 
 

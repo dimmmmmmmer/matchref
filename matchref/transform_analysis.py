@@ -46,8 +46,10 @@ from matchref.match_quality import (
     min_ecc_for_refine_attempt,
     refine_early_exit_enabled,
     refine_edit_plausible,
+    refine_gradient_floor,
     refine_ncc_passes,
     refine_ncc_threshold,
+    refine_structure_passes,
     sample_score_passes,
     score_from_refine_ncc,
 )
@@ -506,14 +508,21 @@ class TransformAnalyzer:
                     rot_note,
                     refine_outcome.ncc,
                 )
-                refine_ok = refine_ncc_passes(refine_outcome.ncc, self.config) and refine_edit_plausible(
-                    refine_outcome.edit, canvas, self.config
+                refine_ok = (
+                    refine_ncc_passes(refine_outcome.ncc, self.config)
+                    and refine_edit_plausible(refine_outcome.edit, canvas, self.config)
+                    and refine_structure_passes(refine_outcome.gradient_ncc, self.config)
                 )
                 if not refine_ok:
                     reasons: list[str] = []
                     if not refine_ncc_passes(refine_outcome.ncc, self.config):
                         reasons.append(
                             f"NCC {refine_outcome.ncc:.4f} < {refine_ncc_threshold(self.config):.2f}"
+                        )
+                    if not refine_structure_passes(refine_outcome.gradient_ncc, self.config):
+                        reasons.append(
+                            f"structure {refine_outcome.gradient_ncc:.3f} < "
+                            f"{refine_gradient_floor(self.config):.2f} (intensity-only match)"
                         )
                     if not refine_edit_plausible(refine_outcome.edit, canvas, self.config):
                         lim = max_refine_pan_tilt_pixels(canvas, self.config)
