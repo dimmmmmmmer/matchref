@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+config/user_config.json
+*.log
+.DS_Store
+
+# Debug comparison frames written at runtime
+debug/
