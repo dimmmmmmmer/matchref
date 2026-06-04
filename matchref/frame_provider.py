@@ -84,6 +84,7 @@ class FrameProvider:
         for cap in self._media_cache.values():
             cap.release()
         self._media_cache.clear()
+        self._media_fps.clear()
 
     def get_offline_frame_at_index(self, frame_index: int) -> np.ndarray | None:
         frame, _ = self.get_offline_frame_at_index_with_meta(frame_index)
