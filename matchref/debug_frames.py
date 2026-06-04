@@ -56,6 +56,7 @@ def save_match_debug(
     online_for_match: np.ndarray,
     offline_ref: np.ndarray,
     online_raw: np.ndarray | None = None,
+    result_render: np.ndarray | None = None,
     mapping_detail: str = "",
     extra_lines: list[str] | None = None,
 ) -> str:
@@ -72,6 +73,13 @@ def save_match_debug(
     compare = _stack_horizontal(online_for_match, offline_ref)
     image_path = base / "compare_online_vs_offline.jpg"
     cv2.imwrite(str(image_path), compare)
+
+    if result_render is not None:
+        # [applied transform result | offline] — this is what Resolve should show.
+        cv2.imwrite(
+            str(base / "result_vs_offline.jpg"),
+            _stack_horizontal(result_render, offline_ref),
+        )
 
     raw_line = ""
     if online_raw is not None:

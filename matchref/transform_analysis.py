@@ -637,6 +637,37 @@ class TransformAnalyzer:
                 f"match: FAIL ecc={alignment.ecc_score:.4f} "
                 f"(admit {admit:.2f}, apply {apply_floor:.2f}) — {sample.message}"
             )
+
+        # Render exactly what gets written to the Inspector and stack it against the
+        # offline, so the debug shows the *result*, not just the pre-transform inputs.
+        result_render: np.ndarray | None = None
+        extra = [compare_line, match_line]
+        if sample.ok and online_raw is not None:
+            try:
+                from matchref.clip_edit_transform import (
+                    ClipEditTransform,
+                    apply_clip_edit_to_frame,
+                )
+                from matchref.transform_convert import resolve_transform
+
+                canvas = self._timeline_canvas_size()
+                rt = resolve_transform(sample, self.config, canvas)
+                edit = ClipEditTransform(
+                    zoom_x=rt.edit_zoom_x,
+                    zoom_y=rt.edit_zoom_y,
+                    pan=rt.edit_pan,
+                    tilt=rt.edit_tilt,
+                    rotation_deg=rt.edit_rotation,
+                )
+                result_render = apply_clip_edit_to_frame(online_raw, edit, canvas, self.config)
+                extra.append(
+                    f"applied Inspector: Zoom={rt.edit_zoom_x:.4f} Pan={rt.edit_pan:.1f} "
+                    f"Tilt={rt.edit_tilt:.1f} Rot={rt.edit_rotation:.2f} "
+                    f"(input_scaling={self.config.get('input_scaling', 'fit')})"
+                )
+            except Exception:  # noqa: BLE001
+                result_render = None
+
         image_path = save_match_debug(
             self._debug_dir,
             clip_name=result.clip_name,
@@ -644,8 +675,9 @@ class TransformAnalyzer:
             online_for_match=online,
             offline_ref=offline,
             online_raw=online_raw,
+            result_render=result_render,
             mapping_detail=mapping.detail or mapping.source.value,
-            extra_lines=[compare_line, match_line],
+            extra_lines=extra,
         )
         self.logger.info("  debug: %s", image_path)
 
