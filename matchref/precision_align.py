@@ -151,8 +151,9 @@ def refine_resolve_edit(
     if refine_w > 0 and width > refine_w:
         scale = refine_w / float(width)
         rw, rh = max(2, int(round(width * scale))), max(2, int(round(height * scale)))
-        online_s = cv2.resize(online_raw, (rw, rh), interpolation=cv2.INTER_AREA)
-        offline_s = cv2.resize(offline_ref, (rw, rh), interpolation=cv2.INTER_AREA)
+        # Only shrink the *canvas* — pass the raw frames through so _fit_frame_to_canvas
+        # letterboxes them aspect-correctly at the reduced size (pre-resizing online_raw
+        # to the canvas would stretch a non-2:1 source and wreck the match).
         seed = ClipEditTransform(
             zoom_x=initial.zoom_x,
             zoom_y=initial.zoom_y,
@@ -160,7 +161,7 @@ def refine_resolve_edit(
             tilt=initial.tilt * scale,
             rotation_deg=initial.rotation_deg,
         )
-        coarse = _refine_at_canvas(online_s, offline_s, (rw, rh), config, seed, warp)
+        coarse = _refine_at_canvas(online_raw, offline_ref, (rw, rh), config, seed, warp)
         edit = coarse.edit
         upscaled = quantize_clip_edit(
             ClipEditTransform(

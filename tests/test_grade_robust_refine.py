@@ -96,3 +96,32 @@ def test_coarse_to_fine_scales_pan_back_to_full_canvas() -> None:
     assert abs(outcome.edit.zoom_x - 1.15) < 0.03
     assert abs(outcome.edit.pan - 48.0) < 6.0  # full-canvas px, within a few of truth
     assert abs(outcome.edit.tilt + 30.0) < 6.0
+
+
+def test_coarse_to_fine_handles_non_2to1_source() -> None:
+    # Regression: the downscaled search must letterbox the raw source aspect-correctly.
+    # A 16:9 source on a 2:1 canvas must not be stretched to the reduced canvas.
+    cfg = _config()
+    cfg.set("refine_max_width", 400)
+    canvas = (1200, 600)  # 2:1, wider than refine_max_width
+    rng = np.random.default_rng(3)
+    native = np.full((1080, 1920, 3), 20, np.uint8)  # 16:9 source
+    for _ in range(40):
+        x, y = int(rng.integers(0, 1850)), int(rng.integers(0, 1040))
+        color = tuple(int(v) for v in rng.integers(40, 255, 3))
+        cv2.rectangle(native, (x, y), (x + 60, y + 50), color, -1)
+    known = ClipEditTransform(zoom_x=1.2, zoom_y=1.2, pan=40.0, tilt=-24.0)
+    offline = _grade(apply_clip_edit_to_frame(native, known, canvas, cfg))
+
+    outcome = refine_resolve_edit(
+        native,
+        offline,
+        canvas_size=canvas,
+        config=cfg,
+        initial=ClipEditTransform(zoom_x=1.1, zoom_y=1.1, pan=20.0, tilt=-12.0),
+    )
+
+    assert abs(outcome.edit.zoom_x - 1.2) < 0.03
+    assert abs(outcome.edit.pan - 40.0) < 6.0
+    assert abs(outcome.edit.tilt + 24.0) < 6.0
+    assert outcome.ncc > 0.95
