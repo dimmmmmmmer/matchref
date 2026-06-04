@@ -48,6 +48,24 @@ def _stack_horizontal(left: np.ndarray, right: np.ndarray, gap: int = 8) -> np.n
     return np.hstack([left_p, sep, right_p])
 
 
+def _normalized_difference(
+    result: np.ndarray, offline: np.ndarray, *, near_black: int = 24
+) -> tuple[np.ndarray, float]:
+    """
+    Grade-independent |result - offline|: grayscale, local-contrast equalised
+    (CLAHE) so the colour grade cancels, then absolute difference. Dark = aligned.
+    Returns (diff image, fraction of near-black pixels).
+    """
+    gr = cv2.cvtColor(result, cv2.COLOR_BGR2GRAY)
+    go = cv2.cvtColor(offline, cv2.COLOR_BGR2GRAY)
+    if gr.shape != go.shape:
+        go = cv2.resize(go, (gr.shape[1], gr.shape[0]), interpolation=cv2.INTER_AREA)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    diff = cv2.absdiff(clahe.apply(gr), clahe.apply(go))
+    frac = float((diff < near_black).mean())
+    return diff, frac
+
+
 def save_match_debug(
     debug_dir: Path,
     *,
@@ -74,12 +92,19 @@ def save_match_debug(
     image_path = base / "compare_online_vs_offline.jpg"
     cv2.imwrite(str(image_path), compare)
 
+    diff_line = ""
     if result_render is not None:
         # [applied transform result | offline] — this is what Resolve should show.
         cv2.imwrite(
             str(base / "result_vs_offline.jpg"),
             _stack_horizontal(result_render, offline_ref),
         )
+        # Difference map: grade-normalised (CLAHE) grayscale |result - offline|.
+        # Dark = aligned. The fraction of near-black pixels is a quick "did it lock"
+        # number that ignores colour grade and shows residual geometric error.
+        diff, near_black = _normalized_difference(result_render, offline_ref)
+        cv2.imwrite(str(base / "difference.jpg"), diff)
+        diff_line = f"difference: {near_black * 100:.1f}% near-black (higher = better aligned)"
 
     raw_line = ""
     if online_raw is not None:
@@ -102,6 +127,8 @@ def save_match_debug(
     ]
     if raw_line:
         lines.append(raw_line)
+    if diff_line:
+        lines.append(diff_line)
     if extra_lines:
         lines.extend(extra_lines)
 

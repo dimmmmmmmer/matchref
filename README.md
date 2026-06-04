@@ -205,6 +205,8 @@ matchref/
 
 По завершении анализа формируется итоговый отчёт.
 
+При `debug_save_frames` в папку клипа также пишутся: `online_raw_source.jpg` (нативный кадр), `online_for_match.jpg`, `offline_reference.jpg`, `result_vs_offline.jpg` (применённый трансформ vs offline) и `difference.jpg` (ЧБ, CLAHE, `|result − offline|`; тёмное = совпало). В `comparison.txt` — применённые значения Inspector и `% near-black` (выше = лучше выровнено, не зависит от грейда).
+
 ## Ограничения
 
 - Без EDL/XML сопоставление предполагает, что offline-референс **совпадает по record-позиции** с online-таймлайном.
