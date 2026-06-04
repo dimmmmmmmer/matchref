@@ -163,23 +163,76 @@ def refine_resolve_edit(
         )
         coarse = _refine_at_canvas(online_raw, offline_ref, (rw, rh), config, seed, warp)
         edit = coarse.edit
-        upscaled = quantize_clip_edit(
-            ClipEditTransform(
-                zoom_x=edit.zoom_x,
-                zoom_y=edit.zoom_y,
-                pan=edit.pan / scale,
-                tilt=edit.tilt / scale,
-                rotation_deg=edit.rotation_deg,
-            ),
-            config,
+        upscaled = ClipEditTransform(
+            zoom_x=edit.zoom_x,
+            zoom_y=edit.zoom_y,
+            pan=edit.pan / scale,
+            tilt=edit.tilt / scale,
+            rotation_deg=edit.rotation_deg,
         )
+        if bool(config.get("refine_fine_polish", True)):
+            return _fine_polish(
+                online_raw, offline_ref, canvas_size, config, upscaled, coarse.strategy
+            )
         return RefineOutcome(
-            edit=upscaled,
+            edit=quantize_clip_edit(upscaled, config),
             ncc=coarse.ncc,
             used_position=coarse.used_position,
             strategy=coarse.strategy,
         )
     return _refine_at_canvas(online_raw, offline_ref, canvas_size, config, initial, warp)
+
+
+def _fine_polish(
+    online_raw: np.ndarray,
+    offline_ref: np.ndarray,
+    canvas_size: tuple[int, int],
+    config: AppConfig,
+    start: ClipEditTransform,
+    strategy: str,
+) -> RefineOutcome:
+    """
+    Sub-pixel polish at full resolution, seeded by the coarse result.
+
+    Starting from the (already near-optimal) coarse estimate and using only small
+    steps keeps the search inside the correct basin — it cannot wander to a far
+    spurious minimum the way a full-resolution search from scratch does — while
+    recovering the ~1-2px quantisation lost to the downscaled pass.
+    """
+    width, height = int(canvas_size[0]), int(canvas_size[1])
+    offline_fit = offline_ref
+    if offline_fit.shape[1] != width or offline_fit.shape[0] != height:
+        offline_fit = cv2.resize(offline_ref, (width, height), interpolation=cv2.INTER_AREA)
+    ref = _Reference(offline_fit, config)
+    use_rot = not bool(config.get("lock_alignment_rotation", False))
+
+    def cost(p: list[float]) -> float:
+        z, px, py, rd = p
+        edit = ClipEditTransform(z, z, px, py, rd if use_rot else 0.0)
+        try:
+            return ref.cost(_render_with_edit(online_raw, edit, canvas_size, config))
+        except Exception:
+            return 1e12
+
+    state = [float(start.zoom_x), float(start.pan), float(start.tilt), float(start.rotation_deg)]
+    fine_steps = config.get("refine_fine_steps")
+    if not isinstance(fine_steps, list):
+        # (zoom, pan/tilt px, rotation deg) — small enough to stay in the basin.
+        fine_steps = [[0.004, 2.0, 0.1], [0.001, 0.5, 0.03], [0.0003, 0.25, 0.0]]
+    for z_step, p_step, r_step in fine_steps:
+        state = _coordinate_descent(
+            state, cost, deltas=[z_step, p_step, p_step, r_step if use_rot else 0.0]
+        )
+
+    final = quantize_clip_edit(
+        ClipEditTransform(state[0], state[0], state[1], state[2], state[3] if use_rot else 0.0),
+        config,
+    )
+    score = ref.score(_render_with_edit(online_raw, final, canvas_size, config))
+    used_position = abs(final.pan) >= float(config.get("snap_pan_tilt_below_pixels", 2.0)) or abs(
+        final.tilt
+    ) >= float(config.get("snap_pan_tilt_below_pixels", 2.0))
+    return RefineOutcome(edit=final, ncc=score, used_position=used_position, strategy=f"{strategy}+fine")
 
 
 def _refine_at_canvas(

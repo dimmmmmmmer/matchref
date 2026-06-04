@@ -638,7 +638,7 @@ class TransformAnalyzer:
             sample_point=point.value,
             online_for_match=online,
             offline_ref=offline,
-            online_raw=online_raw if compensate else None,
+            online_raw=online_raw,
             mapping_detail=mapping.detail or mapping.source.value,
             extra_lines=[compare_line, match_line],
         )

@@ -73,8 +73,15 @@ def save_match_debug(
     image_path = base / "compare_online_vs_offline.jpg"
     cv2.imwrite(str(image_path), compare)
 
+    raw_line = ""
     if online_raw is not None:
         cv2.imwrite(str(base / "online_raw_source.jpg"), online_raw)
+        rh, rw = online_raw.shape[:2]
+        fh, fw = online_for_match.shape[:2]
+        raw_line = (
+            f"online_raw_source: {rw}x{rh} (native source, before fit) "
+            f"→ fit canvas {fw}x{fh}"
+        )
     cv2.imwrite(str(base / "online_for_match.jpg"), online_for_match)
     cv2.imwrite(str(base / "offline_reference.jpg"), offline_ref)
 
@@ -85,6 +92,8 @@ def save_match_debug(
         f"mapping: {mapping_detail}",
         f"image: {image_path}",
     ]
+    if raw_line:
+        lines.append(raw_line)
     if extra_lines:
         lines.extend(extra_lines)
 
