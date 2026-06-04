@@ -107,11 +107,16 @@ class _Reference:
         return max(self.intensity_ncc(rendered), self.gradient_ncc(rendered))
 
     def cost(self, rendered: np.ndarray) -> float:
-        metric = str(self._config.get("refine_cost_metric", "gradient")).lower()
+        metric = str(self._config.get("refine_cost_metric", "blend")).lower()
         if metric == "intensity":
             return 1.0 - self.intensity_ncc(rendered)
         if metric == "blend":
-            return 1.0 - 0.5 * (self.intensity_ncc(rendered) + self.gradient_ncc(rendered))
+            # Weight toward the gradient term: its sharp peak fixes zoom precisely,
+            # while a little intensity keeps pan/tilt smooth and survives non-rigid
+            # content (fire/smoke) where gradient alone is unreliable.
+            wg = float(self._config.get("refine_blend_gradient_weight", 0.5))
+            wg = min(1.0, max(0.0, wg))
+            return 1.0 - (wg * self.gradient_ncc(rendered) + (1.0 - wg) * self.intensity_ncc(rendered))
         return 1.0 - self.gradient_ncc(rendered)
 
 
@@ -207,11 +212,29 @@ def _fine_polish(
     ref = _Reference(offline_fit, config)
     use_rot = not bool(config.get("lock_alignment_rotation", False))
 
+    # When the seed already correlates well in the gradient domain the content is
+    # rigid with clear structure (e.g. A031), so polish on the gradient alone — its
+    # sharp peak locks zoom to the exact value (1.124, not the ~1.122 the broad
+    # intensity term settles for). When gradient is weak (non-rigid fire/smoke) keep
+    # the configured blend so position stays stable.
+    seed_render = _render_with_edit(
+        online_raw,
+        ClipEditTransform(
+            start.zoom_x, start.zoom_y, start.pan, start.tilt, start.rotation_deg
+        ),
+        canvas_size,
+        config,
+    )
+    gradient_lock = ref.gradient_ncc(seed_render) >= float(
+        config.get("refine_fine_gradient_lock_threshold", 0.6)
+    )
+
     def cost(p: list[float]) -> float:
         z, px, py, rd = p
         edit = ClipEditTransform(z, z, px, py, rd if use_rot else 0.0)
         try:
-            return ref.cost(_render_with_edit(online_raw, edit, canvas_size, config))
+            rendered = _render_with_edit(online_raw, edit, canvas_size, config)
+            return (1.0 - ref.gradient_ncc(rendered)) if gradient_lock else ref.cost(rendered)
         except Exception:
             return 1e12
 
