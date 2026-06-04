@@ -140,8 +140,55 @@ def refine_resolve_edit(
     """
     Direct search on Resolve Edit (Zoom/Pan/Tilt/Rotation) to minimize picture error.
 
-    Uses the same render path as the Inspector simulation for 1:1 applicability.
+    Coarse-to-fine: the search runs on a resolution-capped canvas. At full timeline
+    resolution the picture error landscape is riddled with spurious minima (repeated
+    edges, fine detail) and the optimiser wanders hundreds of pixels away; a
+    downscaled canvas gives a smooth, robust landscape — and is several times faster.
+    Zoom/rotation are scale-invariant; Pan/Tilt are scaled back to full canvas.
     """
+    width, height = int(canvas_size[0]), int(canvas_size[1])
+    refine_w = int(config.get("refine_max_width", 1920))
+    if refine_w > 0 and width > refine_w:
+        scale = refine_w / float(width)
+        rw, rh = max(2, int(round(width * scale))), max(2, int(round(height * scale)))
+        online_s = cv2.resize(online_raw, (rw, rh), interpolation=cv2.INTER_AREA)
+        offline_s = cv2.resize(offline_ref, (rw, rh), interpolation=cv2.INTER_AREA)
+        seed = ClipEditTransform(
+            zoom_x=initial.zoom_x,
+            zoom_y=initial.zoom_y,
+            pan=initial.pan * scale,
+            tilt=initial.tilt * scale,
+            rotation_deg=initial.rotation_deg,
+        )
+        coarse = _refine_at_canvas(online_s, offline_s, (rw, rh), config, seed, warp)
+        edit = coarse.edit
+        upscaled = quantize_clip_edit(
+            ClipEditTransform(
+                zoom_x=edit.zoom_x,
+                zoom_y=edit.zoom_y,
+                pan=edit.pan / scale,
+                tilt=edit.tilt / scale,
+                rotation_deg=edit.rotation_deg,
+            ),
+            config,
+        )
+        return RefineOutcome(
+            edit=upscaled,
+            ncc=coarse.ncc,
+            used_position=coarse.used_position,
+            strategy=coarse.strategy,
+        )
+    return _refine_at_canvas(online_raw, offline_ref, canvas_size, config, initial, warp)
+
+
+def _refine_at_canvas(
+    online_raw: np.ndarray,
+    offline_ref: np.ndarray,
+    canvas_size: tuple[int, int],
+    config: AppConfig,
+    initial: ClipEditTransform,
+    warp: np.ndarray | None = None,
+) -> RefineOutcome:
     width, height = int(canvas_size[0]), int(canvas_size[1])
     offline_fit = offline_ref
     if offline_fit.shape[1] != width or offline_fit.shape[0] != height:

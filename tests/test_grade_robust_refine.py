@@ -73,3 +73,26 @@ def test_refine_recovers_transform_under_grade() -> None:
     assert abs(outcome.edit.pan - 18.0) < 1.5
     assert abs(outcome.edit.tilt + 12.0) < 1.5
     assert outcome.ncc > 0.95
+
+
+def test_coarse_to_fine_scales_pan_back_to_full_canvas() -> None:
+    # Canvas wider than refine_max_width forces the downscaled search; the returned
+    # Pan/Tilt must be expressed in full-canvas pixels, not the reduced ones.
+    cfg = _config()
+    cfg.set("refine_max_width", 256)
+    canvas = (768, 432)
+    online = cv2.resize(_textured_frame(), canvas)
+    known = ClipEditTransform(zoom_x=1.15, zoom_y=1.15, pan=48.0, tilt=-30.0)
+    offline = _grade(apply_clip_edit_to_frame(online, known, canvas, cfg))
+
+    outcome = refine_resolve_edit(
+        online,
+        offline,
+        canvas_size=canvas,
+        config=cfg,
+        initial=ClipEditTransform(zoom_x=1.1, zoom_y=1.1, pan=30.0, tilt=-18.0),
+    )
+
+    assert abs(outcome.edit.zoom_x - 1.15) < 0.03
+    assert abs(outcome.edit.pan - 48.0) < 6.0  # full-canvas px, within a few of truth
+    assert abs(outcome.edit.tilt + 30.0) < 6.0
