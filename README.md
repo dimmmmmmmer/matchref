@@ -133,6 +133,7 @@ API Resolve не всегда отдаёт выделение таймлайна
 - `transform_variance_threshold` — порог различия start/mid/end для решения о среднем ключе
 - `offline_timeline_offset_frames` — сдвиг таймкода offline-файла относительно таймлайна
 - `dry_run` — анализ без записи в Inspector
+- `edit_round_mode` (`nearest` | `up`) — округление значений Inspector. `up` округляет «в большую сторону» (по магнитуде: zoom 1.1243 → 1.125 при `edit_zoom_decimal_places: 3`), чтобы матч слегка перекрывал кадр, а не оставлял чёрную кромку. `nearest` (по умолчанию) — максимально точно.
 
 ### База вписывания
 
