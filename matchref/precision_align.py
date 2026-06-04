@@ -45,35 +45,78 @@ def normalize_to_canvas(
     return on, off
 
 
-def _gray_crop_mse(
-    rendered: np.ndarray,
-    reference: np.ndarray,
-    config: AppConfig,
-) -> float:
+def _content_gray(image: np.ndarray, config: AppConfig) -> np.ndarray:
     margins = overlay_margins_fraction(config)
-    g1 = cv2.cvtColor(rendered, cv2.COLOR_BGR2GRAY).astype(np.float32)
-    g2 = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY).astype(np.float32)
-    crop = content_crop_for_shape(g1.shape[0], g1.shape[1], margins)
-    a = g1[crop.y0 : crop.y1, crop.x0 : crop.x1]
-    b = g2[crop.y0 : crop.y1, crop.x0 : crop.x1]
-    diff = a - b
-    return float(np.mean(diff * diff))
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    crop = content_crop_for_shape(gray.shape[0], gray.shape[1], margins)
+    return gray[crop.y0 : crop.y1, crop.x0 : crop.x1]
+
+
+def _gradient_magnitude(gray: np.ndarray) -> np.ndarray:
+    """Sobel gradient magnitude — invariant to grade/exposure, sharp at edges."""
+    blur = cv2.GaussianBlur(gray, (3, 3), 0)
+    gx = cv2.Sobel(blur, cv2.CV_32F, 1, 0, ksize=3)
+    gy = cv2.Sobel(blur, cv2.CV_32F, 0, 1, ksize=3)
+    return cv2.magnitude(gx, gy)
+
+
+def _zero_mean_norm(arr: np.ndarray) -> tuple[np.ndarray, float]:
+    centered = arr - float(arr.mean())
+    return centered, float(np.linalg.norm(centered))
+
+
+def _ncc_against(feature: np.ndarray, ref_centered: np.ndarray, ref_norm: float) -> float:
+    a, a_norm = _zero_mean_norm(feature)
+    denom = a_norm * ref_norm
+    if denom < 1e-6:
+        return 0.0
+    return float(np.clip(float(np.sum(a * ref_centered)) / denom, -1.0, 1.0))
+
+
+class _Reference:
+    """
+    Pre-computed offline features so each cost evaluation only processes the render.
+
+    Holds both an intensity and a gradient-domain view of the (fixed) offline frame.
+    Gradient NCC is robust to the grade difference between raw online media and the
+    colour-graded lock-cut, and falls off sharply with misalignment (precise fit);
+    intensity NCC keeps ungraded clips scoring high. ``score`` blends them per
+    ``refine_score_metric``; ``cost`` drives the search per ``refine_cost_metric``.
+    """
+
+    def __init__(self, reference: np.ndarray, config: AppConfig) -> None:
+        gray = _content_gray(reference, config)
+        self._intensity = _zero_mean_norm(gray)
+        self._gradient = _zero_mean_norm(_gradient_magnitude(gray))
+        self._config = config
+
+    def intensity_ncc(self, rendered: np.ndarray) -> float:
+        return _ncc_against(_content_gray(rendered, self._config), *self._intensity)
+
+    def gradient_ncc(self, rendered: np.ndarray) -> float:
+        feat = _gradient_magnitude(_content_gray(rendered, self._config))
+        return _ncc_against(feat, *self._gradient)
+
+    def score(self, rendered: np.ndarray) -> float:
+        metric = str(self._config.get("refine_score_metric", "max")).lower()
+        if metric == "intensity":
+            return self.intensity_ncc(rendered)
+        if metric == "gradient":
+            return self.gradient_ncc(rendered)
+        return max(self.intensity_ncc(rendered), self.gradient_ncc(rendered))
+
+    def cost(self, rendered: np.ndarray) -> float:
+        metric = str(self._config.get("refine_cost_metric", "gradient")).lower()
+        if metric == "intensity":
+            return 1.0 - self.intensity_ncc(rendered)
+        if metric == "blend":
+            return 1.0 - 0.5 * (self.intensity_ncc(rendered) + self.gradient_ncc(rendered))
+        return 1.0 - self.gradient_ncc(rendered)
 
 
 def _ncc_score(rendered: np.ndarray, reference: np.ndarray, config: AppConfig) -> float:
-    """1.0 = perfect match (for logging / quality)."""
-    margins = overlay_margins_fraction(config)
-    g1 = cv2.cvtColor(rendered, cv2.COLOR_BGR2GRAY).astype(np.float32)
-    g2 = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY).astype(np.float32)
-    crop = content_crop_for_shape(g1.shape[0], g1.shape[1], margins)
-    a = g1[crop.y0 : crop.y1, crop.x0 : crop.x1]
-    b = g2[crop.y0 : crop.y1, crop.x0 : crop.x1]
-    a -= a.mean()
-    b -= b.mean()
-    denom = float(np.linalg.norm(a) * np.linalg.norm(b))
-    if denom < 1e-6:
-        return 0.0
-    return float(np.clip(np.sum(a * b) / denom, -1.0, 1.0))
+    """Back-compat: report match quality (default blends intensity + gradient)."""
+    return _Reference(reference, config).score(rendered)
 
 
 def _render_with_edit(
@@ -104,6 +147,8 @@ def refine_resolve_edit(
     if offline_fit.shape[1] != width or offline_fit.shape[0] != height:
         offline_fit = cv2.resize(offline_fit, (width, height), interpolation=cv2.INTER_AREA)
 
+    ref = _Reference(offline_fit, config)
+
     def cost_full(z: float, px: float, py: float, rd: float) -> float:
         max_zoom = float(config.get("refine_zoom_max", 4.0))
         min_zoom = float(config.get("refine_zoom_min", 0.25))
@@ -119,7 +164,7 @@ def refine_resolve_edit(
         )
         try:
             rendered = _render_with_edit(online_raw, edit, canvas_size, config)
-            return _gray_crop_mse(rendered, offline_fit, config)
+            return ref.cost(rendered)
         except Exception:
             return 1e12
 
@@ -131,7 +176,7 @@ def refine_resolve_edit(
             config=config,
             initial=initial,
             cost_fn=lambda p: cost_full(p[0], p[1], p[2], p[3]),
-            score_fn=lambda img: _ncc_score(img, offline_fit, config),
+            score_fn=ref.score,
         )
 
     zoom = float(initial.zoom_x)
@@ -173,7 +218,7 @@ def refine_resolve_edit(
             rotation_deg=0.0,
         )
         rendered_z = _render_with_edit(online_raw, zoom_edit, canvas_size, config)
-        ncc_z = _ncc_score(rendered_z, offline_fit, config)
+        ncc_z = ref.score(rendered_z)
 
         if should_refine_position(
             config=config,
@@ -224,7 +269,7 @@ def refine_resolve_edit(
         config,
     )
     rendered = _render_with_edit(online_raw, final, canvas_size, config)
-    score = _ncc_score(rendered, offline_fit, config)
+    score = ref.score(rendered)
     return RefineOutcome(
         edit=final,
         ncc=score,

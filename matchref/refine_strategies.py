@@ -134,10 +134,21 @@ def refine_with_strategy_order(
     ctx: _RefineContext,
 ) -> tuple[ClipEditTransform, float]:
     state = list(initial_state)
-    for stage in order:
-        if stage not in ("zoom", "position", "rotation"):
-            continue
-        state = _run_stage(state, stage, ctx)
+    # Repeat the stage sequence: zoom and position are coupled, so a single pass
+    # leaves zoom stale after position moves (and vice-versa). Re-running until the
+    # cost stops improving tightens the fit — this is what closes the "almost but
+    # not quite" gap on reframed clips.
+    passes = max(1, int(ctx.config.get("refine_stage_passes", 4)))
+    prev_cost = ctx.cost_fn(state)
+    for _ in range(passes):
+        for stage in order:
+            if stage not in ("zoom", "position", "rotation"):
+                continue
+            state = _run_stage(state, stage, ctx)
+        cost = ctx.cost_fn(state)
+        if prev_cost - cost < 1e-5:
+            break
+        prev_cost = cost
     edit = _state_to_edit(state, ctx)
     rendered = apply_clip_edit_to_frame(
         ctx.online_raw, edit, ctx.canvas_size, ctx.config
