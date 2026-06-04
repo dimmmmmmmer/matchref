@@ -248,29 +248,11 @@ def _fine_polish(
     ref = _Reference(offline_fit, config)
     use_rot = not bool(config.get("lock_alignment_rotation", False))
 
-    # When the seed already correlates well in the gradient domain the content is
-    # rigid with clear structure (e.g. A031), so polish on the gradient alone — its
-    # sharp peak locks zoom to the exact value (1.124, not the ~1.122 the broad
-    # intensity term settles for). When gradient is weak (non-rigid fire/smoke) keep
-    # the configured blend so position stays stable.
-    seed_render = _render_with_edit(
-        online_raw,
-        ClipEditTransform(
-            start.zoom_x, start.zoom_y, start.pan, start.tilt, start.rotation_deg
-        ),
-        canvas_size,
-        config,
-    )
-    gradient_lock = ref.gradient_ncc(seed_render) >= float(
-        config.get("refine_fine_gradient_lock_threshold", 0.6)
-    )
-
     def cost(p: list[float]) -> float:
         z, px, py, rd = p
         edit = ClipEditTransform(z, z, px, py, rd if use_rot else 0.0)
         try:
-            rendered = _render_with_edit(online_raw, edit, canvas_size, config)
-            return (1.0 - ref.gradient_ncc(rendered)) if gradient_lock else ref.cost(rendered)
+            return ref.cost(_render_with_edit(online_raw, edit, canvas_size, config))
         except Exception:
             return 1e12
 
@@ -283,6 +265,43 @@ def _fine_polish(
         state = _coordinate_descent(
             state, cost, deltas=[z_step, p_step, p_step, r_step if use_rot else 0.0]
         )
+
+    # Decide the gradient lock on the *aligned* result (not the raw seed, which is
+    # still misaligned and scores low). When the aligned result correlates well in
+    # the gradient domain the content is rigid with clear structure (e.g. A031), so
+    # pin zoom to the sharp gradient peak — its exact value (1.124, vs the ~1.122 the
+    # broad intensity term settles for). Non-rigid fire/smoke scores low → left as is.
+    aligned_render = _render_with_edit(
+        online_raw,
+        ClipEditTransform(state[0], state[0], state[1], state[2], state[3] if use_rot else 0.0),
+        canvas_size,
+        config,
+    )
+    gradient_lock = ref.gradient_ncc(aligned_render) >= float(
+        config.get("refine_fine_gradient_lock_threshold", 0.6)
+    )
+
+    if gradient_lock:
+        # Final zoom-only pass on the gradient with pan/tilt fixed: the joint search
+        # lets position drag zoom a hair off (1.122), but the gradient zoom peak is
+        # sharp — pinning zoom alone lands it exactly (1.124). Sub-pixel residual
+        # pan/tilt (below the snap threshold, treated as 0 anyway) would shift that
+        # peak, so snap them to 0 first.
+        snap = float(config.get("snap_pan_tilt_below_pixels", 2.0))
+        px = 0.0 if abs(state[1]) < snap else state[1]
+        py = 0.0 if abs(state[2]) < snap else state[2]
+
+        def zoom_cost(p: list[float]) -> float:
+            edit = ClipEditTransform(p[0], p[0], px, py, state[3] if use_rot else 0.0)
+            try:
+                return 1.0 - ref.gradient_ncc(_render_with_edit(online_raw, edit, canvas_size, config))
+            except Exception:
+                return 1e12
+
+        zstate = [state[0], 0.0, 0.0, 0.0]
+        for z_step in (0.004, 0.001, 0.0003):
+            zstate = _coordinate_descent(zstate, zoom_cost, deltas=[z_step, 0.0, 0.0, 0.0])
+        state[0], state[1], state[2] = zstate[0], px, py
 
     final = quantize_clip_edit(
         ClipEditTransform(state[0], state[0], state[1], state[2], state[3] if use_rot else 0.0),
