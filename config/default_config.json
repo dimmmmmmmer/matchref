@@ -108,6 +108,7 @@
   "geometry_agreement_zoom_tol": 0.04,
   "min_ecc_for_refine_attempt": 0.3,
   "refine_min_gradient_ncc": 0.4,
+  "refine_position_min_gain": 0.12,
   "max_refine_pan_tilt_fraction": 0.15,
   "min_alignment_scale": 0.4,
   "max_alignment_scale": 2.5,

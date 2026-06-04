@@ -304,6 +304,34 @@ def _fine_polish(
             zstate = _coordinate_descent(zstate, zoom_cost, deltas=[z_step, 0.0, 0.0, 0.0])
         state[0], state[1], state[2] = zstate[0], px, py
 
+    # Position parsimony: keep Pan/Tilt only if it earns a real gain in the
+    # (grade-invariant) gradient match. On low-structure clips (smoke/fire/graded)
+    # the position drifts chasing noise while zoom stays right — a genuine reframe
+    # lifts the gradient a lot, a spurious one barely moves it (or makes it worse),
+    # so zero it. Verified across clips: real reframes gain +0.27…+0.56, drifts
+    # gain < 0.12 (one even -0.27).
+    snap = float(config.get("snap_pan_tilt_below_pixels", 2.0))
+    if abs(state[1]) >= snap or abs(state[2]) >= snap:
+        min_gain = float(config.get("refine_position_min_gain", 0.12))
+        g_with = ref.gradient_ncc(
+            _render_with_edit(
+                online_raw,
+                ClipEditTransform(state[0], state[0], state[1], state[2], state[3] if use_rot else 0.0),
+                canvas_size,
+                config,
+            )
+        )
+        g_zero = ref.gradient_ncc(
+            _render_with_edit(
+                online_raw,
+                ClipEditTransform(state[0], state[0], 0.0, 0.0, state[3] if use_rot else 0.0),
+                canvas_size,
+                config,
+            )
+        )
+        if g_with - g_zero < min_gain:
+            state[1] = state[2] = 0.0
+
     final = quantize_clip_edit(
         ClipEditTransform(state[0], state[0], state[1], state[2], state[3] if use_rot else 0.0),
         config,
