@@ -123,6 +123,7 @@
   "analysis_max_width": 0,
   "video_seek_mode": "refine",
   "video_decode_index_offset": 0,
+  "media_cache_size": 2,
   "hub_fps_fallback": 23.976,
   "transform_base_scale": 1.0,
   "transform_base_center": [0.5, 0.5],

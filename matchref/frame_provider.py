@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +29,12 @@ class FrameProvider:
         self._offline_cap: cv2.VideoCapture | None = None
         self._offline_path: str = ""
         self._offline_fps: float = 0.0
-        self._media_cache: dict[str, cv2.VideoCapture] = {}
+        # LRU of open source decoders. Unbounded growth here leaks hundreds of MB
+        # per file across a large batch (each 6K VideoCapture holds native decoder
+        # buffers); clips are processed sequentially using one source at a time, so
+        # a tiny cache is enough.
+        self._media_cache: OrderedDict[str, cv2.VideoCapture] = OrderedDict()
+        self._media_cache_size = max(1, int(config.get("media_cache_size", 2)))
         self._media_fps: dict[str, float] = {}
 
     def set_offline_reference(self, path: str, *, timeline_fps: float = 0.0) -> None:
@@ -157,15 +163,25 @@ class FrameProvider:
     def _open_media(self, media_path: str) -> cv2.VideoCapture | None:
         if not media_path or not Path(media_path).is_file():
             return None
-        if media_path not in self._media_cache:
-            cap = cv2.VideoCapture(media_path)
-            if not cap.isOpened():
-                return None
-            self._media_cache[media_path] = cap
-            probe = probe_video(media_path)
-            if probe.fps > 0:
-                self._media_fps[media_path] = probe.fps
-        return self._media_cache[media_path]
+        cached = self._media_cache.get(media_path)
+        if cached is not None:
+            self._media_cache.move_to_end(media_path)
+            return cached
+        cap = cv2.VideoCapture(media_path)
+        if not cap.isOpened():
+            return None
+        self._media_cache[media_path] = cap
+        probe = probe_video(media_path)
+        if probe.fps > 0:
+            self._media_fps[media_path] = probe.fps
+        # Evict and release the least-recently-used decoders beyond the cap.
+        while len(self._media_cache) > self._media_cache_size:
+            _, old = self._media_cache.popitem(last=False)
+            try:
+                old.release()
+            except Exception:
+                pass
+        return cap
 
 
 def sample_points_for_clip(
