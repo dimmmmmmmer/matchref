@@ -42,6 +42,60 @@ def max_scale_spread(config: AppConfig) -> float:
     return float(config.get("max_scale_spread_ratio", 1.35))
 
 
+def _monotonic_ramp(values: list[float], tol: float) -> bool:
+    """True if values progress consistently (non-decreasing or non-increasing).
+
+    A genuine keyframed reframe ramps smoothly across the clip; a single-frame fluke
+    makes the middle sample an outlier. ``tol`` absorbs sub-threshold jitter.
+    """
+    if len(values) < 2:
+        return True
+    pairs = list(zip(values, values[1:], strict=False))
+    inc = all(b >= a - tol for a, b in pairs)
+    dec = all(b <= a + tol for a, b in pairs)
+    return inc or dec
+
+
+def clip_motion_profile(samples: list[TransformSample], config: AppConfig) -> tuple[bool, bool]:
+    """
+    Inspect time-ordered accepted samples → (varies, animated).
+
+    ``varies``   — zoom/pan/tilt change across the clip beyond the static thresholds.
+    ``animated`` — that variation is a smooth, monotonic ramp on every changing axis
+                   (i.e. a real keyframed reframe), as opposed to erratic disagreement
+                   (a bad/ambiguous match). Animated clips get keyframed, not rejected.
+    """
+    if len(samples) < 2:
+        return False, False
+    ordered = sorted(samples, key=lambda s: s.clip_local_frame)
+    zooms = [float(s.scale) for s in ordered]
+    pans = [float(s.position_x) * 1.0 for s in ordered]
+    tilts = [float(s.position_y) * 1.0 for s in ordered]
+    _, _, zspread = scale_spread(zooms)
+
+    # Animation thresholds are deliberately smaller than the static-disagreement
+    # reject threshold (max_scale_spread): a modest push-in the editor keyframed
+    # (e.g. ×1.1 zoom over the clip) must be reproduced as a ramp, not flattened to
+    # one mid value.
+    pan_tol = float(config.get("keyframe_pan_delta_norm", 0.01))  # fraction of frame
+    zoom_spread_min = float(config.get("keyframe_zoom_spread", 1.06))
+    zoom_varies = zspread > zoom_spread_min
+    pan_varies = (max(pans) - min(pans)) > pan_tol
+    tilt_varies = (max(tilts) - min(tilts)) > pan_tol
+    varies = zoom_varies or pan_varies or tilt_varies
+    if not varies:
+        return False, False
+
+    animated = True
+    if zoom_varies and not _monotonic_ramp(zooms, max(zooms) * 0.01):
+        animated = False
+    if pan_varies and not _monotonic_ramp(pans, pan_tol):
+        animated = False
+    if tilt_varies and not _monotonic_ramp(tilts, pan_tol):
+        animated = False
+    return True, animated
+
+
 def ecc_consensus_passes(scales: list[float], rep_score: float, config: AppConfig) -> bool:
     """Accept a low-structure clip on ECC geometry alone.
 

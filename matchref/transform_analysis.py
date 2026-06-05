@@ -42,6 +42,7 @@ from matchref.lock_cut_align import (
 from matchref.logging_report import log_sample
 from matchref.match_quality import (
     assess_clip_match_quality,
+    clip_motion_profile,
     ecc_consensus_passes,
     max_scale_spread,
     min_ecc_for_refine_attempt,
@@ -670,20 +671,40 @@ class TransformAnalyzer:
                 reasons.append(
                     f"best sample scale {best.scale:.3f} outside [{min_scale}, {max_scale}]"
                 )
-            # Cross-sample corroboration: if several samples survived, their zoom must
-            # agree — independent frames landing on the same zoom is strong evidence the
-            # geometry is right (and rules out a single-frame fluke).
+            # Samples may differ across the clip because the reframe is *keyframed*
+            # (a smooth ramp) — that is a real animation to reproduce, not a fault.
+            # Distinguish it from erratic disagreement (a bad/ambiguous match).
+            animated = False
             if len(ok_samples) >= 2:
-                lo, hi, spread = scale_spread([s.scale for s in ok_samples])
-                if spread > max_scale_spread(self.config):
-                    reasons.append(
-                        f"samples disagree on zoom {lo:.3f}…{hi:.3f} (×{spread:.2f})"
-                    )
+                varies, is_ramp = clip_motion_profile(ok_samples, self.config)
+                keyframes_enabled = bool(self.config.get("apply_keyframes_on_variance", True))
+                if varies and is_ramp and keyframes_enabled:
+                    animated = True
+                else:
+                    # Reject only a *large* erratic disagreement (a bad/ambiguous
+                    # match). Small non-monotonic jitter is treated as static — the
+                    # best sample is applied (handled below).
+                    lo, hi, spread = scale_spread([s.scale for s in ok_samples])
+                    if spread > max_scale_spread(self.config):
+                        reasons.append(
+                            f"samples disagree {lo:.3f}…{hi:.3f} (×{spread:.2f}), not a smooth ramp"
+                        )
             result.problem = bool(reasons)
+            result.animated = animated and not result.problem
             for msg in reasons:
                 result.warnings.append(msg)
                 self.logger.warning("Quality check: %s — %s", result.clip_name, msg)
-            if not result.problem:
+            if not result.problem and result.animated:
+                self.logger.info(
+                    "Animated reframe: %s — %d keyframes (%s)",
+                    result.clip_name,
+                    len(ok_samples),
+                    ", ".join(
+                        f"{s.sample_point.value} z={s.scale:.3f}"
+                        for s in sorted(ok_samples, key=lambda s: s.clip_local_frame)
+                    ),
+                )
+            elif not result.problem:
                 via = best.accept_via or "score"
                 if via == "score":
                     self.logger.info(

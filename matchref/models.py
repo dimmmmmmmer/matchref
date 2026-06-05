@@ -59,6 +59,7 @@ class ClipAnalysisResult:
     problem: bool = False
     warnings: list[str] = field(default_factory=list)
     use_mid_key: bool = True
+    animated: bool = False  # reframe changes across the clip → keyframe each sample
     timeline_item: Any = None
     baseline_zoom_x: float = 1.0
     baseline_zoom_y: float = 1.0

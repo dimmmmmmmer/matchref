@@ -99,6 +99,12 @@ class EditTransformApplier:
         compose_bl = baseline if compose_result_with_baseline(self.config) else None
         sorted_samples = sorted(ok_samples, key=lambda s: s.clip_local_frame)
 
+        # Keyframed reframe: write each sample's own transform at its frame so the
+        # animation is reproduced, instead of one static value.
+        if result.animated and use_playhead and len(sorted_samples) >= 2:
+            self._apply_keyframes(item, sorted_samples, clip_start, compose_bl, result.clip_name)
+            return
+
         select = str(self.config.get("apply_transform_select", "best")).lower()
         if bool(self.config.get("apply_median_transform", False)) and len(sorted_samples) >= 2:
             select = "median"  # back-compat
@@ -144,6 +150,39 @@ class EditTransformApplier:
             last_resolved.edit_pan,
             last_resolved.edit_tilt,
             last_resolved.edit_rotation,
+        )
+
+    def _apply_keyframes(
+        self,
+        item: Any,
+        sorted_samples: list[TransformSample],
+        clip_start: int,
+        compose_bl: Any | None,
+        clip_name: str,
+    ) -> None:
+        """Set each sample's own resolved transform at its frame (keyframe ramp)."""
+        resolved = [
+            (s, resolve_transform(s, self.config, self._size, baseline=compose_bl))
+            for s in sorted_samples
+        ]
+        for _s, rt in resolved:
+            if not self._resolved_values_sane(rt):
+                raise RuntimeError(
+                    f"Refusing to keyframe insane transform (zoom={rt.edit_zoom_x:.3f}, "
+                    f"pan={rt.edit_pan:.1f}, tilt={rt.edit_tilt:.1f})"
+                )
+        for sample, rt in resolved:
+            self._seek(clip_start + sample.clip_local_frame)
+            self._set_edit_properties(item, rt)
+        self.logger.info(
+            "Edit Inspector (keyframed): %s — %d keyframes [%s]",
+            clip_name,
+            len(resolved),
+            ", ".join(
+                f"{s.sample_point.value}@{s.clip_local_frame} z={rt.edit_zoom_x:.3f} "
+                f"pan={rt.edit_pan:.0f} tilt={rt.edit_tilt:.0f}"
+                for s, rt in resolved
+            ),
         )
 
     def _median_resolved(self, samples: list[TransformSample], baseline: Any | None) -> Any:
