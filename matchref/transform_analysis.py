@@ -811,6 +811,14 @@ class TransformAnalyzer:
                     f"Tilt={rt.edit_tilt:.1f} Rot={rt.edit_rotation:.2f} "
                     f"(input_scaling={self.config.get('input_scaling', 'fit')})"
                 )
+                # Content-robust quality of the *applied* result. near-black is fooled
+                # by overlays/bright/non-rigid content; structure (edge gradient) is
+                # the reliable number — low here = the geometry is actually off.
+                from matchref.precision_align import _Reference
+
+                g = _Reference(offline, self.config).gradient_ncc(result_render)
+                flag = "  <-- LOW, likely misaligned" if g < 0.4 else ""
+                extra.append(f"applied structure (gradient-NCC of result vs offline): {g:.3f}{flag}")
             except Exception:  # noqa: BLE001
                 result_render = None
 
