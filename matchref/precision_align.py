@@ -223,7 +223,16 @@ def refine_resolve_edit(
             strategy=coarse.strategy,
             gradient_ncc=coarse.gradient_ncc,
         )
-    return _refine_at_canvas(online_raw, offline_ref, canvas_size, config, initial, warp)
+
+    # No coarse downscale (canvas <= refine_max_width). Still run the fine polish so
+    # the gradient zoom-lock and the position-parsimony (drop unjustified Pan/Tilt)
+    # apply at every timeline resolution — they used to be skipped on small canvases.
+    direct = _refine_at_canvas(online_raw, offline_ref, canvas_size, config, initial, warp)
+    if bool(config.get("refine_fine_polish", True)):
+        return _fine_polish(
+            online_raw, offline_ref, canvas_size, config, direct.edit, direct.strategy
+        )
+    return direct
 
 
 def _fine_polish(
