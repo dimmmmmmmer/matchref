@@ -122,7 +122,7 @@ class TransformAnalyzer:
         self.conform.load()
         validate_against_timeline(timeline_ctx, config, conform=self.conform, logger=logger)
         resolver = OfflineFrameResolver(config, self.conform)
-        self.frames = FrameProvider(config, offline_resolver=resolver)
+        self.frames = FrameProvider(config, offline_resolver=resolver, logger=self.logger)
         if self.conform.is_available:
             self.logger.info(
                 "Conform map loaded (%d events) from %s",
