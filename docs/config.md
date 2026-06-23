@@ -164,6 +164,7 @@
 | `edit_rotation_decimal_places` | `2` | Знаков для поворота. |
 | `edit_keyframe_via_playhead` | `true` | Ставить значения, двигая плейхед (нужно для кейфреймов). |
 | `verify_apply_readback` | `true` | После записи читать значения через `GetProperty` и сверять с целевыми; расхождение/частичная запись → клип помечается как ошибка, а не «Applied». |
+| `apply_via_fusion` | `false` | **Прототип.** Для анимированных (кейфреймленных) клипов писать трансформ через узел Fusion Transform вместо Edit-кейфреймов. Требует валидации в Resolve — см. [`docs/fusion-apply-plan.md`](fusion-apply-plan.md). |
 
 ### Знаки/инверсии осей
 
