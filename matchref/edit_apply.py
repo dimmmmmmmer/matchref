@@ -93,6 +93,16 @@ class EditTransformApplier:
         except Exception:
             pass
 
+        # Animated clips can be keyframed via a Fusion Transform node (cleaner than
+        # the Edit-page playhead keyframes) when apply_via_fusion is enabled.
+        from matchref.fusion_apply import FusionTransformApplier, should_use_fusion
+
+        if should_use_fusion(result, self.config):
+            FusionTransformApplier(self.config, self._size, self.logger).apply_animated(
+                item, result
+            )
+            return
+
         kf_enabled = self._enable_keyframe_mode()
 
         baseline = baseline_from_result(result)
