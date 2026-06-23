@@ -93,7 +93,7 @@ class EditTransformApplier:
         except Exception:
             pass
 
-        self._enable_keyframe_mode()
+        kf_enabled = self._enable_keyframe_mode()
 
         baseline = baseline_from_result(result)
         compose_bl = baseline if compose_result_with_baseline(self.config) else None
@@ -102,7 +102,9 @@ class EditTransformApplier:
         # Keyframed reframe: write each sample's own transform at its frame so the
         # animation is reproduced, instead of one static value.
         if result.animated and use_playhead and len(sorted_samples) >= 2:
-            self._apply_keyframes(item, sorted_samples, clip_start, compose_bl, result.clip_name)
+            self._apply_keyframes(
+                item, sorted_samples, clip_start, compose_bl, result.clip_name, kf_enabled
+            )
             return
 
         select = str(self.config.get("apply_transform_select", "best")).lower()
@@ -159,8 +161,18 @@ class EditTransformApplier:
         clip_start: int,
         compose_bl: Any | None,
         clip_name: str,
+        kf_enabled: bool,
     ) -> None:
         """Set each sample's own resolved transform at its frame (keyframe ramp)."""
+        # Without keyframe mode the per-frame writes would collapse to a single
+        # static value (last write wins) — a silently wrong ramp. Refuse instead so
+        # the clip is flagged for manual keyframing.
+        if not kf_enabled:
+            raise RuntimeError(
+                "Animated reframe needs keyframe mode, which Resolve did not accept on "
+                "this build. Set apply_keyframes_on_variance=false to apply a single "
+                "static transform, or keyframe this clip manually."
+            )
         resolved = [
             (s, resolve_transform(s, self.config, self._size, baseline=compose_bl))
             for s in sorted_samples
@@ -172,7 +184,12 @@ class EditTransformApplier:
                     f"pan={rt.edit_pan:.1f}, tilt={rt.edit_tilt:.1f})"
                 )
         for sample, rt in resolved:
-            self._seek(clip_start + sample.clip_local_frame)
+            target = clip_start + sample.clip_local_frame
+            if not self._seek(target):
+                raise RuntimeError(
+                    f"Playhead seek to frame {target} failed — refusing to write a "
+                    "collapsed keyframe ramp."
+                )
             self._set_edit_properties(item, rt)
         self.logger.info(
             "Edit Inspector (keyframed): %s — %d keyframes [%s]",
@@ -211,34 +228,50 @@ class EditTransformApplier:
             return False
         return True
 
-    def _enable_keyframe_mode(self) -> None:
+    def _enable_keyframe_mode(self) -> bool:
+        """Enable keyframe mode; return whether Resolve accepted it on this build."""
         setter = _callable(self.resolve, "SetKeyframeMode")
         if setter is None:
-            return
-        try:
-            setter(2)
-        except Exception:
+            return False
+        for mode in (2, 0):
             try:
-                setter(0)
+                setter(mode)
+                return True
             except Exception:
-                pass
+                continue
+        return False
 
-    def _seek(self, timeline_frame: int) -> None:
+    def _seek(self, timeline_frame: int) -> bool:
+        """Move the playhead; return whether the move was confirmed (best-effort).
+
+        Returns False when the seek call is unavailable/raises, or when the
+        timeline timecode can be read back and clearly did not reach the target.
+        When it cannot be verified (no GetCurrentTimecode) it trusts the setter.
+        """
         timeline = self._timeline_obj()
         setter = _callable(timeline, "SetCurrentTimecode")
         if setter is None:
-            return
-        from matchref.timecode import TimecodeFormat, format_timecode
+            return False
+        from matchref.timecode import TimecodeFormat, format_timecode, parse_timecode
 
         fmt = TimecodeFormat(
             fps=self.timeline_ctx.fps,
             drop_frame=self.timeline_ctx.drop_frame,
         )
-        tc = format_timecode(max(0, int(timeline_frame)), fmt)
+        target = max(0, int(timeline_frame))
+        tc = format_timecode(target, fmt)
         try:
             setter(tc)
         except Exception:
-            pass
+            return False
+        getter = _callable(timeline, "GetCurrentTimecode")
+        if getter is None:
+            return True  # can't verify on this build — trust the setter
+        try:
+            actual = parse_timecode(str(getter()), fmt)
+        except (ValueError, TypeError):
+            return True
+        return abs(actual - target) <= 1
 
     # Tolerance (in the property's own units) when verifying a written value was
     # accepted by Resolve. Generous enough to absorb internal re-quantisation.

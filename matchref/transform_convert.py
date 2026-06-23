@@ -145,7 +145,7 @@ def resolve_transform(
         tx = float(sample.position_x) * width
         ty = float(sample.position_y) * height
 
-    # Resolve Edit: Zoom 1.0 = 100%. Значения >10 в edit_zoom_base трактуются как устаревший «процентный» режим.
+    # Resolve Edit: Zoom 1.0 = 100%. An edit_zoom_base > 10 is treated as the legacy "percent" mode.
     zoom_base = float(config.get("edit_zoom_base", 1.0))
     use_percent = bool(config.get("edit_zoom_as_percent", False)) or zoom_base > 10.0
     if use_percent:
