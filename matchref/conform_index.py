@@ -168,13 +168,45 @@ class ConformIndex:
             )
 
     def _load_reference_origin(self) -> None:
-        """Optional lock-cut file origin (only if reference does not start at hub 0)."""
+        """Lock-cut file origin: manual reference TC, or auto start-TC alignment."""
+        from matchref.timecode_align import auto_align_enabled, start_offset_frames
+
+        fmt = self.timecode_format
         start_tc = str(self.config.get("reference_start_timecode", "")).strip()
+        timeline_tc = self.timeline.start_timecode if self.timeline is not None else ""
+
+        # Auto: neutralize a timeline-vs-reference start-timecode difference so the
+        # hub→file mapping lines up. Opt-in (default off) — never changes a working
+        # project silently. Needs the reference's start TC (manual or, in future,
+        # read from the Resolve media pool).
+        if auto_align_enabled(self.config) and timeline_tc and start_tc:
+            self._reference_origin_frames = max(0, start_offset_frames(timeline_tc, start_tc, fmt))
+            self.logger.info(
+                "Auto start-TC align: timeline %s vs reference %s → reference origin %d frames",
+                timeline_tc,
+                start_tc,
+                self._reference_origin_frames,
+            )
+            return
+
         if start_tc:
             try:
-                self._reference_origin_frames = parse_timecode(start_tc, self.timecode_format)
+                self._reference_origin_frames = parse_timecode(start_tc, fmt)
             except ValueError:
                 self.logger.warning("Invalid reference_start_timecode: %s", start_tc)
+
+        # Diagnostic: surface a mismatch even when not auto-aligning, so it does not
+        # silently throw the mapping off (the user asked for this).
+        if not auto_align_enabled(self.config) and timeline_tc and start_tc:
+            diff = start_offset_frames(timeline_tc, start_tc, fmt)
+            if diff != 0:
+                self.logger.warning(
+                    "Start-TC mismatch: timeline %s vs reference %s (%d frames). "
+                    "Enable auto_align_start_timecode to neutralize it.",
+                    timeline_tc,
+                    start_tc,
+                    diff,
+                )
 
     def _offline_from_resolve(self, resolve_frame: int) -> int:
         return resolve_timeline_to_offline_frame(

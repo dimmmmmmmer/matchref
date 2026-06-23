@@ -32,7 +32,8 @@
 | `prefer_record_timecode_mapping` | `true` | Сопоставлять по record-TC, а не source-TC. |
 | `normalize_conform_to_resolve` | `true` | Нормализовать индексы conform под нумерацию Resolve. |
 | `retime_aware_source_mapping` | `true` | Учитывать ретайм клипа при вычислении source-кадра. |
-| `reference_start_timecode` | `""` | Стартовый TC референса (если файл без TC-трека). |
+| `reference_start_timecode` | `""` | Стартовый TC оффлайн-референса (ручной fallback). |
+| `auto_align_start_timecode` | `false` | Авто-нивелирование расхождения старт-TC таймлайна и референса. Читает start TC таймлайна из Resolve; при выкл и наличии расхождения — предупреждает в логе. Знак/интеграцию проверить в Resolve. |
 | `lock_cut_hub_origin_frame` | `-1` | Origin-кадр lock-cut на хабе (−1 = авто). |
 | `offline_timeline_offset_frames` | `0` | Ручной сдвиг индекса offline-кадра (legacy-путь). |
 | `video_decode_index_offset` | `0` | Компенсация лага декодера на +1 кадр у некоторых кодеков. |
