@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any
@@ -23,8 +24,11 @@ class FrameProvider:
         self,
         config: AppConfig,
         offline_resolver: OfflineFrameResolver | None = None,
+        logger: logging.Logger | None = None,
     ) -> None:
         self.config = config
+        self.logger = logger or logging.getLogger("matchref")
+        self._warned_paths: set[str] = set()
         self.offline_resolver = offline_resolver or OfflineFrameResolver(config)
         self._offline_cap: cv2.VideoCapture | None = None
         self._offline_path: str = ""
@@ -161,8 +165,17 @@ class FrameProvider:
             return None
         return frame
 
+    def _warn_unreadable(self, media_path: str, reason: str) -> None:
+        """Log each unreadable media path once so 'frame missing' has a cause."""
+        key = media_path or "<empty path>"
+        if key in self._warned_paths:
+            return
+        self._warned_paths.add(key)
+        self.logger.warning("Cannot read media %s — %s", key, reason)
+
     def _open_media(self, media_path: str) -> cv2.VideoCapture | None:
         if not media_path or not Path(media_path).is_file():
+            self._warn_unreadable(media_path, "file not found (offline media or wrong path?)")
             return None
         cached = self._media_cache.get(media_path)
         if cached is not None:
@@ -170,6 +183,7 @@ class FrameProvider:
             return cached
         cap = cv2.VideoCapture(media_path)
         if not cap.isOpened():
+            self._warn_unreadable(media_path, "OpenCV could not open the file (unsupported codec?)")
             return None
         self._media_cache[media_path] = cap
         probe = probe_video(media_path)
