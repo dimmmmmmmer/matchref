@@ -9,7 +9,10 @@ mkdir -p "$RESOLVE_UTILITY"
 
 echo "Installing project to: $RESOLVE_UTILITY/matchref"
 rm -rf "$RESOLVE_UTILITY/matchref"
-rsync -a --exclude '.venv' --exclude '__pycache__' --exclude '.git' \
+rsync -a \
+  --exclude '.venv' --exclude '__pycache__' --exclude '.git' \
+  --exclude 'debug' --exclude '.pytest_cache' --exclude '.ruff_cache' \
+  --exclude '.DS_Store' \
   "$ROOT/" "$RESOLVE_UTILITY/matchref/"
 
 if [[ -d "$ROOT/.venv" ]]; then
