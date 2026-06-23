@@ -7,6 +7,7 @@ import traceback
 from pathlib import Path
 
 from matchref.config import USER_CONFIG_PATH, AppConfig
+from matchref.conform_paths import assign_conform_path, conform_path_from_config
 from matchref.debug_frames import resolve_debug_dir
 from matchref.logging_report import setup_logging
 from matchref.pipeline import MatchRefPipeline
@@ -49,26 +50,6 @@ def _open_in_file_manager(path: Path) -> None:
         os.startfile(str(path))  # type: ignore[attr-defined]  # noqa: S606
     else:
         subprocess.run(["xdg-open", str(path)], check=False)
-
-
-def assign_conform_path(config: AppConfig, path: str) -> None:
-    """Route single conform file to EDL or XML config keys by extension."""
-    path = str(path).strip()
-    config.set("conform_edl_path", "")
-    config.set("conform_xml_path", "")
-    if not path:
-        return
-    ext = Path(path).suffix.lower()
-    if ext == ".edl":
-        config.set("conform_edl_path", path)
-    else:
-        config.set("conform_xml_path", path)
-
-
-def conform_path_from_config(config: AppConfig) -> str:
-    edl = str(config.get("conform_edl_path", "")).strip()
-    xml = str(config.get("conform_xml_path", "")).strip()
-    return edl or xml
 
 
 class PipelineWorker(QObject):

@@ -1,9 +1,9 @@
-"""Conform-path routing helpers from the GUI (pure; no Qt event loop needed)."""
+"""Conform-path routing helpers (pure; no Qt dependency)."""
 
 from __future__ import annotations
 
 from matchref.config import AppConfig
-from matchref.gui import assign_conform_path, conform_path_from_config
+from matchref.conform_paths import assign_conform_path, conform_path_from_config
 
 
 def test_edl_routes_to_edl_key() -> None:
