@@ -102,6 +102,10 @@
 | `refine_zoom_steps` | `[0.03, 0.01, 0.002, 0.0005]` | Шаги поиска зума. |
 | `refine_pan_steps` | `[12, 4, 1, 0.25]` | Шаги поиска pan/tilt (px). |
 | `refine_rotation_steps` | `[0.4, 0.1, 0.025]` | Шаги поиска поворота (°). |
+| `refine_fine_steps` | `[[0.004,2.0,0.1],…]` | Шаги финальной полировки на полном разрешении: `[zoom, pan_px, rot_deg]`. |
+| `refine_zoom_max` / `refine_zoom_min` | `4.0` / `0.25` | Границы зума при поиске рефайна. |
+| `refine_pan_limit_scale` | `1.5` | Лимит Pan/Tilt = `max(W,H)·scale`. |
+| `max_refine_pan_tilt_pixels` | `0.0` | Явный лимит Pan/Tilt в px (0 = из доли канваса). |
 | `refine_cost_metric` | `"blend"` | Метрика стоимости: `blend`/`gradient`/`intensity`. |
 | `refine_score_metric` | `"max"` | Как считать итоговый скор. |
 | `refine_blend_gradient_weight` | `0.5` | Вес градиента в blend-метрике. |
