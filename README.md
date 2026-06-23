@@ -14,9 +14,10 @@ them by hand.
 - DaVinci Resolve **Studio** 20 or newer (Scripting API)
 - macOS with Python 3 (the installer creates an isolated environment)
 
-## Install (macOS)
+## Install
 
-1. Download this project (green **Code → Download ZIP** on GitHub) and unzip it.
+1. Download the **[latest release](https://github.com/dimmmmmmmer/matchref/releases/latest)**
+   (under *Assets → Source code (zip)*) and unzip it.
 2. Run the installer for your OS — it sets up a Python environment and copies
    MatchRef into Resolve's scripts folder (the first run takes a minute):
 
