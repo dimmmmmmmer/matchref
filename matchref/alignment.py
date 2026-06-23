@@ -263,8 +263,24 @@ def _run_ecc(
     return float(score), warp_out
 
 
+# Degrees of freedom per ECC motion model — used to prefer the simplest model
+# that already explains the data (a higher-DOF fit almost always scores at least
+# as high, even when it is overfitting shear/perspective into noise).
+_MOTION_DOF = {
+    cv2.MOTION_TRANSLATION: 2,
+    cv2.MOTION_EUCLIDEAN: 4,
+    cv2.MOTION_AFFINE: 6,
+    cv2.MOTION_HOMOGRAPHY: 8,
+}
+
+
 def _ecc_motion_modes(config: AppConfig) -> list[int]:
     primary = _motion_mode(str(config.get("ecc_motion_mode", "euclidean")))
+    if primary == cv2.MOTION_HOMOGRAPHY:
+        # The Edit page is affine-only; a homography's perspective terms cannot be
+        # represented as Zoom/Pan/Tilt/Rotation, and warp_analysis_to_timeline
+        # would rescale it incorrectly. Solve affine instead of silently lying.
+        primary = cv2.MOTION_AFFINE
     if bool(config.get("ecc_single_motion_mode", True)):
         return [primary]
     fallbacks = [cv2.MOTION_EUCLIDEAN, cv2.MOTION_TRANSLATION, cv2.MOTION_AFFINE]
@@ -273,6 +289,25 @@ def _ecc_motion_modes(config: AppConfig) -> list[int]:
         if mode not in modes:
             modes.append(mode)
     return modes
+
+
+def _choose_ecc_result(
+    candidates: list[tuple[int, AlignmentResult]],
+    threshold: float,
+) -> AlignmentResult | None:
+    """Pick the lowest-DOF model that clears the threshold; else the best score.
+
+    Comparing raw ECC scores across motion models is apples-to-oranges — affine
+    will out-score euclidean even when the extra freedom only fits noise. So among
+    models that already pass admission, prefer the simplest (fewest DOF); only when
+    none pass do we fall back to the single highest-scoring fit.
+    """
+    if not candidates:
+        return None
+    passing = [(dof, r) for dof, r in candidates if r.ecc_score >= threshold]
+    if passing:
+        return min(passing, key=lambda t: (t[0], -t[1].ecc_score))[1]
+    return max(candidates, key=lambda t: t[1].ecc_score)[1]
 
 
 def _try_ecc(
@@ -287,8 +322,9 @@ def _try_ecc(
         int(config.get("ecc_iterations", 5000)),
         float(config.get("ecc_epsilon", 1e-6)),
     )
-    best: AlignmentResult | None = None
+    candidates: list[tuple[int, AlignmentResult]] = []
     for motion in _ecc_motion_modes(config):
+        dof = _MOTION_DOF.get(motion, 6)
         for gauss in (int(config.get("ecc_gauss_filt_size", 5)), 1):
             try:
                 score, warp = _run_ecc(offline, online, motion, criteria, gauss, init, mask)
@@ -296,10 +332,10 @@ def _try_ecc(
                 filled = _fill_result(out, warp, score, online.shape, "ok (ecc)", config)
                 if not filled.ok:
                     continue
-                if best is None or filled.ecc_score > best.ecc_score:
-                    best = filled
+                candidates.append((dof, filled))
             except cv2.error:
                 continue
+    best = _choose_ecc_result(candidates, float(config.get("ecc_threshold", 0.85)))
     if best is None:
         return None
 

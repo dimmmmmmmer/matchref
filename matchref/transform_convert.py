@@ -49,6 +49,11 @@ def decompose_warp_matrix(
     c, d, ty = matrix[1]
     scale_x = math.hypot(a, c)
     scale_y = math.hypot(b, d)
+    # Resolve's Edit Zoom is uniform (ZoomGang), so we collapse the two axis scales
+    # to their mean. This is exact for the feature path (estimateAffinePartial2D is
+    # 4-DOF: scale_x == scale_y) and for euclidean ECC; it only loses information
+    # under full-affine ECC, where a genuine anamorphic/shear component would be
+    # averaged away rather than reproduced. That is acceptable for an Edit target.
     scale = (scale_x + scale_y) * 0.5
     rotation_deg = math.degrees(math.atan2(c, a))
     return scale, tx, ty, rotation_deg

@@ -57,8 +57,8 @@
 | `alignment_precision` | `"maximum"` | `maximum` включает пирамиду ECC + субпиксельный фазовый рефайн + Edit-рефайн. |
 | `analysis_max_width` | `0` | Ширина анализа в px (0 = брать из таймлайна). |
 | `input_scaling` | `"fit"` | Как вписывать source в канвас: `fit`, `fill`, `stretch`. |
-| `ecc_motion_mode` | `"euclidean"` | Модель ECC: `translation`/`euclidean`/`affine`/`homography`. |
-| `ecc_single_motion_mode` | `true` | Только основная модель (без перебора). См. примечание в аудите. |
+| `ecc_motion_mode` | `"euclidean"` | Модель ECC: `translation`/`euclidean`/`affine`. `homography` автоматически заменяется на `affine` — Edit-страница перспективу не умеет, а пересчёт в пиксели таймлайна для неё некорректен. |
+| `ecc_single_motion_mode` | `true` | Только основная модель. При `false` перебираются несколько; выбирается **наименьшая по DOF модель, прошедшая `ecc_threshold`** (а не просто с макс. скором — иначе аффин переобучается на шум). |
 | `ecc_iterations` | `8000` | Макс. итераций ECC. |
 | `ecc_epsilon` | `1e-08` | Критерий сходимости ECC. |
 | `ecc_gauss_filt_size` | `5` | Сглаживание ECC. |
@@ -163,6 +163,7 @@
 | `edit_pan_decimal_places` | `1` | Знаков для Pan/Tilt. |
 | `edit_rotation_decimal_places` | `2` | Знаков для поворота. |
 | `edit_keyframe_via_playhead` | `true` | Ставить значения, двигая плейхед (нужно для кейфреймов). |
+| `verify_apply_readback` | `true` | После записи читать значения через `GetProperty` и сверять с целевыми; расхождение/частичная запись → клип помечается как ошибка, а не «Applied». |
 
 ### Знаки/инверсии осей
 
