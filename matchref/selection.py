@@ -59,7 +59,7 @@ def get_target_clips_with_source(
     Return (clips, source_description).
 
     Resolve UI multi-select is usually invisible to the API.
-    Use Clip Color (правый клик → Clip Color) or clip_selection_mode: all_filtered.
+    Use Clip Color (right-click → Clip Color) or clip_selection_mode: all_filtered.
     """
     log = logger or logging.getLogger("matchref")
     mode = str(config.get("clip_selection_mode", "auto")).lower()

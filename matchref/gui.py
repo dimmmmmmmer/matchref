@@ -206,8 +206,8 @@ class MatchRefWindow(QMainWindow):
         layout.addWidget(self.log_view)
 
         hint = QLabel(
-            "Один клип → лог → apply → следующий. Debug: слева online (как для матча), справа offline lock-cut. "
-            "См. comparison.txt в папке debug."
+            "Per clip: analyze → log → apply → next. Debug frames: online (as matched) on "
+            "the left, offline lock-cut on the right. See comparison.txt in the debug folder."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #666;")
