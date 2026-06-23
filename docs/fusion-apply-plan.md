@@ -56,4 +56,7 @@ clip ──► Fusion comp ──► Transform node (keyframed) ──► output
 
 - Perspective: solve a homography (ECC `MOTION_HOMOGRAPHY`, already available) and
   map its four mapped corners to a CornerPin node's `TopLeft…BottomRight` inputs.
+  The corner math is implemented and tested in `matchref/perspective.py`
+  (`homography_corners` → `corners_to_cornerpin`); the CornerPin node creation is
+  the Resolve-only piece left to wire once the Fusion backend is validated.
 - Surface `apply_via_fusion` in the GUI once the prototype is confirmed.
