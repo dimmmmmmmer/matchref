@@ -21,6 +21,7 @@ class TimelineContext:
     width: int
     height: int
     drop_frame: bool = False
+    start_timecode: str = ""
 
     @classmethod
     def from_resolve(cls, timeline: Any) -> TimelineContext:
@@ -39,6 +40,7 @@ class TimelineContext:
             width=info.width,
             height=info.height,
             drop_frame=info.drop_frame,
+            start_timecode=info.start_timecode,
         )
 
     @property

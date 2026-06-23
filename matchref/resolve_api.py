@@ -68,6 +68,7 @@ class TimelineMediaInfo:
     width: int = 0
     height: int = 0
     drop_frame: bool = False
+    start_timecode: str = ""
 
 
 def _read_setting(container: Any, key: str) -> str | None:
@@ -130,6 +131,15 @@ def get_timeline_media_info(timeline: Any) -> TimelineMediaInfo:
         if raw is not None:
             info.drop_frame = raw.lower() in ("1", "true", "yes")
             break
+
+    try:
+        getter = getattr(timeline, "GetStartTimecode", None)
+        if callable(getter):
+            tc = getter()
+            if tc:
+                info.start_timecode = str(tc).strip()
+    except Exception:
+        pass
 
     return info
 
