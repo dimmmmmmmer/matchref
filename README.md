@@ -1,252 +1,118 @@
 # MatchRef — Offline Reference Transform Match
 
-Python-инструмент для **DaVinci Resolve Studio 20+**, который восстанавливает на таймлайне трансформы клипов (Zoom, Pan, Tilt, Rotation) по оффлайн-референсу через **Edit Inspector**, используя OpenCV ECC / feature matching.
+A tool for **DaVinci Resolve Studio 20+** that rebuilds clip transforms
+(Zoom, Pan, Tilt, Rotation) on your conformed timeline to match an **offline
+reference** edit, writing the values into the **Edit Inspector**. It aligns each
+shot to the reference with OpenCV (ECC + feature matching).
 
-## Требования
+Typical use: the offline editor reframed shots, you conformed to the online
+media, and you need those reframes back on the online timeline without redoing
+them by hand.
 
-- DaVinci Resolve **Studio** 20 или новее (Scripting API)
-- Python 3 с пакетами из `requirements.txt`
-- PySide6 для GUI
-- OpenCV + NumPy
+## Requirements
 
-## Установка
+- DaVinci Resolve **Studio** 20 or newer (Scripting API)
+- macOS with Python 3 (the installer creates an isolated environment)
 
-На macOS с Homebrew Python **нельзя** ставить пакеты в систему (`externally-managed-environment`, PEP 668). Используйте виртуальное окружение:
+## Install (macOS)
+
+1. Download this project (green **Code → Download ZIP** on GitHub) and unzip it.
+2. Double-click **`Install MatchRef.command`**.
+
+   It sets up a Python environment and copies MatchRef into Resolve's scripts
+   folder. The first run takes a minute.
+
+   > macOS may block a downloaded script the first time: if you see
+   > *"unidentified developer"*, right-click the file → **Open** → **Open**.
+
+3. In DaVinci Resolve: **Workspace → Scripts → Utility → MatchRef**.
+
+   Do **not** use *Scripts → matchref → main* — that path runs Resolve's bare
+   Python without the dependencies and fails silently.
+
+<details>
+<summary>Manual install (or non-macOS)</summary>
 
 ```bash
 cd /path/to/matchref
-chmod +x setup.sh
-./setup.sh
-source .venv/bin/activate
-python main.py
+./setup.sh                 # create .venv and install dependencies
+./install_resolve.sh       # copy into the Resolve Scripts/Utility folder
 ```
 
-Вручную:
-
-```bash
-cd /path/to/matchref
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-```
-
-> **Resolve:** скрипты внутри Resolve используют **встроенный Python** Blackmagic, не этот venv. Venv нужен для GUI/отладки снаружи. Для запуска из меню Resolve достаточно скопировать проект; OpenCV/PySide6 должны быть доступны в среде Resolve (часто уже есть) или ставятся по документации BMD.
-
-### Запуск из Resolve
-
-**Не нажимайте** `Scripts → matchref → main` — Resolve запускает встроенный Python без PySide6/OpenCV, окно не появится.
-
-Правильная установка (macOS):
-
-```bash
-cd /Users/enrvate/Documents/matchref
-./setup.sh          # если ещё не делали
-chmod +x install_resolve.sh
-./install_resolve.sh
-```
-
-В Resolve: **Workspace → Scripts → Utility → MatchRef** (один пункт, без вложенных папок).
-
-Структура после установки:
-
-```
-.../Fusion/Scripts/Utility/
-  MatchRef.py          ← launcher
-  matchref/
-    main.py
-    matchref/          ← пакет
-    .venv/
-    config/
-```
-
-Ручной запуск GUI при открытом Resolve: `source .venv/bin/activate && python main.py`
-
-### Запуск снаружи (отладка GUI)
+Run the GUI outside Resolve for debugging:
 
 ```bash
 source .venv/bin/activate
 python main.py
 ```
+</details>
 
-Headless:
+## Workflow
 
-```bash
-source .venv/bin/activate
-python main.py --no-gui --analyze   # анализ (запись только если dry_run=false в config)
-python main.py --no-gui --apply     # анализ + запись в Inspector (dry_run принудительно off)
-```
+1. Open your **online** (conformed) timeline.
+2. Render or locate the **offline reference** video.
+3. *(Optional but recommended)* Have the conform **EDL or XML** ready — it makes
+   frame mapping exact.
+4. Flag the shots to process: right-click each online clip →
+   **Clip Color → Purple**. Don't color the lock cut on the timeline.
+5. Launch MatchRef, point it at the offline reference (and conform file), and
+   run it. With Dry Run off it writes straight to the Edit Inspector.
 
-> `--apply` всегда заново анализирует текущий таймлайн: отчёт анализа держит живые ссылки
-> на объекты Resolve API и не сохраняется между запусками процесса.
+MatchRef samples each shot (start / mid / end), aligns to the reference, and
+applies the best transform — or keyframes a smooth reframe ramp. After writing,
+it reads the values back to confirm Resolve accepted them.
 
-## Сопоставление кадров offline
+## Clip selection
 
-| Источник | Когда используется |
-|----------|-------------------|
-| **Hub** | **Таймлайн DaVinci Resolve** — единая шкала: `GetStart()` клипа + local frame. |
-| **EDL / XML** | Record TC из conform автоматически сдвигается в hub (origin из `<timecode>` XML или первого cut). |
-| **Lock cut** | Тот же hub frame → кадр в mp4 (если референс с 00:00:00:00, hub 120 = offline 120). |
-| **Fallback** | Без conform: hub frame напрямую в offline (+ `offline_timeline_offset_frames`). |
+Set `clip_selection_mode` in `config/user_config.json`:
 
-Поддерживается CMX 3600 EDL (`* FROM CLIP NAME`, `* SOURCE FILE`) и базовый FCPXML / Premiere XMEML.
+| Mode | Behavior |
+|------|----------|
+| `auto` (default) | Selected API → **Clip Color** → flags → all filtered |
+| `clip_color` | Clips with `selection_clip_color` (Purple, …) |
+| `selected` | Only `GetSelectedTimelineItems()` |
+| `all_filtered` | All video clips except the lock cut |
+| `track` | All clips on `video_track_index` |
 
-Параметры в config:
+## Configuration
 
-- **FPS и разрешение** — только с открытого таймлайна Resolve (в config не задаются)
-- `require_fps_match` — стоп, если XML/EDL или lock-cut не совпадают с timeline FPS
-- `normalize_conform_to_resolve` — привести EDL/XML record TC к шкале Resolve (по умолчанию `true`, origin из XML автоматически)
-- **4K ref / 1080 timeline** — номера кадров = Resolve hub; картинки масштабируются для ECC (разное разрешение — warning, не ошибка)
-- `reference_start_timecode` — только если lock-cut **файл** начинается не с hub 0 (редкий случай)
-- `offline_mapping_mode`: `auto` | `conform` | `timeline`
+- Defaults: `config/default_config.json`
+- Your overrides: `config/user_config.json` (written by the GUI)
+- **Full reference for every key:** [`docs/config.md`](docs/config.md)
 
-## Рабочий процесс
+Common ones: `dry_run` (analyze without writing), `ecc_threshold` (match
+strictness), `input_scaling` (`fit`/`fill`/`stretch` — must match your project's
+Mismatched-Resolution setting), `edit_round_mode` (`nearest`/`up`).
 
-1. Откройте **online** таймлайн после конформа.
-2. Подготовьте **offline reference** — рендер оффлайн-монтажа (record TC из EDL = позиция в файле).
-3. *(Опционально)* Укажите **XML** разбивки таймлайна (для таймкодов record → lock cut).
-4. Пометьте все **online-шоты**: правый клик → **Clip Color → Purple** (в Resolve нет массовых Flags). Lock cut только в Offline Reference, не красьте его на таймлайне.
-5. Запустите MatchRef, укажите offline-файл.
-6. **Run MatchRef** — анализ (start / mid / end) и, если Dry Run выключен, сразу запись в **Edit Inspector**.
+## How frame mapping works
 
-## Выбор клипов
+With an EDL/XML conform, record timecodes are mapped into the timeline hub for
+exact offline lookup. Without one, MatchRef assumes the reference lines up with
+the timeline by position (tunable via `offline_timeline_offset_frames`). FPS and
+resolution come from the open Resolve timeline. See
+[`docs/architecture.md`](docs/architecture.md) for details.
 
-API Resolve не всегда отдаёт выделение таймлайна. Режимы в `config/user_config.json`:
+## Limitations
 
-| `clip_selection_mode` | Поведение |
-|----------------------|-----------|
-| `auto` | Selected API → **Clip Color** → flags → all_filtered |
-| `clip_color` | Клипы с цветом `selection_clip_color` (Purple, Orange, …) |
-| `selected` | Только `GetSelectedTimelineItems()` (если есть) |
-| `flagged` | Клипы с флагом (редко в UI) |
-| `all_filtered` | Все video-клипы минус lock cut |
-| `playhead` | Клип под плейхедом |
-| `track` | Все клипы на `video_track_index` |
+- Without EDL/XML, the reference must line up with the online timeline by record
+  position; with EDL/XML, reel/source TC must match the conform events.
+- Heavy grade, crop, or blow-out differences lower the match score.
+- Transforms are written via the Edit Inspector only (not Fusion).
 
-## Конфигурация
-
-- Шаблон: `config/default_config.json`
-- Пользовательский: `config/user_config.json` (создаётся из GUI)
-- **Полный справочник всех ключей:** [`docs/config.md`](docs/config.md)
-
-Ключевые параметры:
-
-- `ecc_threshold` — порог корреляции ECC (ниже — клип помечается как проблемный)
-- `transform_variance_threshold` — порог различия start/mid/end для решения о среднем ключе
-- `offline_timeline_offset_frames` — сдвиг таймкода offline-файла относительно таймлайна
-- `dry_run` — анализ без записи в Inspector
-- `edit_round_mode` (`nearest` | `up`) — округление значений Inspector. `up` округляет «в большую сторону» (по магнитуде: zoom 1.1243 → 1.125 при `edit_zoom_decimal_places: 3`), чтобы матч слегка перекрывал кадр, а не оставлял чёрную кромку. `nearest` (по умолчанию) — максимально точно.
-
-### База вписывания
-
-- `input_scaling` (`fit` | `fill` | `stretch` | `none`) — как источник ложится на холст таймлайна при Zoom=1.0, зеркалит настройку Resolve **Mismatched Resolution Files**. Должно совпадать с проектом, иначе зум каждого клипа смещён на отношение fill/fit (например ×1.125 для 16:9-источника на таймлайне 2:1 — клип без реврейма выдаёт zoom≈1.12 вместо 1.0). Проверка: выбери клип в Resolve, какой Zoom совмещает его с offline — если ≈1.0 у непереомпонованного шота, ставь `fill`.
-
-### Подавление светов (нежёсткий контент)
-
-- `match_highlight_clip` (`auto` | `0`/`off` | число) — на тёмных кадрах с малой яркой пляшущей областью (костёр, блики) эти высоковариативные света перехватывают корреляцию и сбивают позицию со статичной структуры. `auto` (по умолчанию) клипует света **только** на тёмных сценах (median яркости offline < `highlight_clip_dark_median`=48) на уровне `median × highlight_clip_median_mult` (=5); на дневных кадрах не срабатывает. Так позицию ведут статичные объекты (брёвна), а не пламя. Костёр: ncc 0.84→0.97.
-
-### Подгон трансформа (refine)
-
-Online — сырой материал, lock-cut — уже с грейдом, поэтому совпадение считается так, чтобы цветокоррекция не мешала геометрии:
-
-- `refine_max_width` — refine идёт на холсте, суженном до этой ширины (по умолчанию 1920), затем pan/tilt масштабируются обратно. На полном 3840px ландшафт ошибки изрыт ложными минимумами (повторяющиеся края, мелкая детализация) и оптимизатор уезжает на сотни пикселей; пониженное разрешение даёт гладкий устойчивый поиск — и в разы быстрее. `0` = без понижения.
-- `refine_fine_polish` — после грубого прохода доводит результат на **полном** разрешении мелкими шагами (по умолчанию `true`). Стартует от почти-оптимума, поэтому не убегает, но добирает ~1–2px, потерянные на понижении — это и есть субпиксельная точность. Шаги в `refine_fine_steps` (`[[zoom, pan_px, rot_deg], …]`).
-- `refine_cost_metric` (`blend` | `gradient` | `intensity`) — метрика поиска. `blend` (по умолчанию) = ½·intensity + ½·gradient: градиентный член даёт **острый** пик по зуму (точно фиксирует масштаб — на гладкой intensity-метрике зум уползал на ~3%), а intensity-член держит гладкий бассейн для pan/tilt и не разваливается на нежёстком материале (огонь/дым), где чистый `gradient` промахивается. `intensity` = только яркость (нормирована, без грейд-уводов старого MSE). `gradient` = только Sobel-края (максимум устойчивости к грейду, но шумно на нежёстком).
-- `refine_score_metric` (`max` | `intensity` | `gradient`) — метрика приёмки. `max` (по умолчанию): некрашеный клип проходит по яркости, крашеный — по структуре краёв.
-- `refine_stage_passes` — сколько раз повторять стадии zoom/position/rotation до сходимости (по умолчанию 4). Zoom и position связаны, один проход оставляет zoom неоптимальным — это и был остаточный «почти, но не до конца».
-- `refine_position_min_gain` (по умолчанию **0.12**) — паритет позиции: после полировки Pan/Tilt сохраняются, только если их зануление роняет gradient-NCC сильнее этого порога. На низкоструктурных клипах (дым/огонь/грейд) позиция дрейфует за шумом при верном зуме — такой лишний сдвиг зануляется; реальный реврейм даёт большой прирост и сохраняется.
-- `apply_keyframes_on_variance` (по умолчанию **true**) — кейфреймленный реврейм. Если трансформ меняется по клипу **плавной рампой** (zoom/pan/tilt монотонно от start к end), пишутся **кейфреймы** на каждый сэмпл-кадр (start/mid/end), а не одно статичное значение. Эрратичный разброс (середина — выброс) по-прежнему отбраковывается как плохой матч. Пороги детекта анимации: `keyframe_zoom_spread` (1.06) и `keyframe_pan_delta_norm` (0.01).
-- `auto_reframe_ncc_threshold` — порог приёмки refine (по умолчанию **0.90**). На реальном «сырой online vs грейженый lock-cut» идеальное выравнивание даёт ~0.93, поэтому 0.95 недостижим; runaway даёт ≤0.85 — 0.90 разделяет чисто.
-- `min_ecc_for_refine_attempt` (по умолчанию **0.45**) — минимальный начальный ECC, чтобы вообще запустить refine. ECC считается по сырой яркости и на сильном грейде занижен, поэтому порог низкий — grade-устойчивый refine получает шанс, а его собственные гейты (ncc + структура) отсекают плохое.
-- `refine_min_gradient_ncc` (по умолчанию **0.4**) — структурный пол приёмки. Высокий intensity-NCC может «сертифицировать» геометрически неверный матч на похожем по тону кадре; gradient-NCC (края) этого не прощает. Хорошие матчи дают grad 0.66–0.94, мусор — 0.2–0.3.
-- `refine_zoom_only_min_gradient` (по умолчанию **0.30**) — «zoom-only trust»: низкоструктурный наезд **без сдвига** (pan/tilt≈0) с корроборированным зумом (ECC≈refine) принимается по зуму при сниженном структурном поле. Pan-убегания (позиция≠0) и некорроборированный зум так не проходят. Помечается `accept_via="zoom-only"`.
-
-## Архитектура
-
-```
-matchref/
-  config.py            — загрузка/сохранение JSON
-  models.py            — датаклассы результатов (sample / clip / report)
-  pipeline.py          — оркестрация analyze→apply с колбэками статуса
-  gui.py               — PySide6 GUI (анализ в фоновом QThread)
-
-  resolve_api.py       — подключение к Resolve, чтение fps/разрешения, items
-  timeline_context.py  — таймлайн Resolve как hub (fps, raster)
-  selection.py         — выбор клипов (selected / clip color / flags / all)
-  clip_filter.py       — фильтрация целевых клипов и lock-cut
-  clip_metadata.py     — reel / source frame из Resolve
-
-  timecode.py          — SMPTE ↔ frames (drop / non-drop)
-  timebase.py          — единый hub-таймбейс, origin conform→hub
-  fps.py / fps_check.py — нормализация и проверка fps против таймлайна
-  conform_edl.py       — CMX 3600 EDL
-  conform_xml.py       — FCPXML / XMEML
-  conform_index.py     — поиск кадра offline по reel + source TC
-  lock_cut_align.py    — авто-origin lock-cut в hub
-
-  media_probe.py       — fps/метаданные файла через OpenCV
-  frame_read.py        — чтение кадра по индексу (msec / frames / refine)
-  frame_provider.py    — кадры online/offline + кэш VideoCapture
-
-  alignment.py         — ECC / feature matching, разложение affine
-  precision_align.py   — пирамидальный ECC, phase-correlation, refine в Resolve Edit
-  refine_strategies.py — порядок refine (zoom / position / rotation)
-  overlay_crop.py      — кроп оверлеев / ECC-маска
-  reframe_detect.py    — авто-детект reframe из warp
-  match_quality.py     — пороги/гейты качества матча
-  transform_analysis.py — основной анализ клипа (sample → alignment → refine)
-  transform_convert.py — warp → параметры Edit Inspector
-  clip_edit_transform.py — чтение/симуляция текущего Edit-трансформа клипа
-  edit_match_mode.py / edit_quantize.py — режим (absolute/delta) и квантизация
-  edit_apply.py        — запись Pan/Tilt/Zoom/Rotation в Edit Inspector
-
-  debug_frames.py      — сравнительные кадры в папку debug
-  logging_report.py    — логирование и итоговый отчёт
-  extensions.py        — заглушки Perspective / Lens / Dynamic Sampling
-```
-
-## Логирование
-
-В консоль и опционально в файл (`log_file`) выводятся:
-
-`Clip Name | Frame | Scale | Position X/Y | Rotation | ECC Score`
-
-По завершении анализа формируется итоговый отчёт.
-
-При `debug_save_frames` в папку клипа также пишутся: `online_raw_source.jpg` (нативный кадр), `online_for_match.jpg`, `offline_reference.jpg`, `result_vs_offline.jpg` (применённый трансформ vs offline) и `difference.jpg` (ЧБ, CLAHE, `|result − offline|`; тёмное = совпало). В `comparison.txt` — применённые значения Inspector и `% near-black` (выше = лучше выровнено, не зависит от грейда).
-
-## Ограничения
-
-- Без EDL/XML сопоставление предполагает, что offline-референс **совпадает по record-позиции** с online-таймлайном.
-- С EDL/XML нужен reel/source TC, совпадающие с событиями в conform-файле.
-- Online-кадры читаются из исходного файла Media Pool; offline — из указанного reference-файла.
-- Сильные отличия цветокоррекции/кропа/пересвета снижают ECC score.
-- Трансформы только через Edit Inspector (не Fusion).
-
-## Будущие режимы
-
-В config предусмотрены флаги (пока не реализованы):
-
-- `perspective_match_enabled`
-- `lens_distortion_match_enabled`
-- `dynamic_sampling_enabled` / `sample_every_n_frames`
-
-## Разработка
+## Development
 
 ```bash
 source .venv/bin/activate
-python -m pip install -r requirements-dev.txt
-python -m pytest tests/ -q     # модульные тесты (без Resolve)
-ruff check matchref tests       # линтер
-ruff format matchref tests      # форматирование
-mypy                            # проверка типов
+pip install -r requirements-dev.txt
+pytest -q          # unit tests (no Resolve required)
+ruff check .       # lint
+mypy               # type check
 ```
 
-Тесты покрывают чистую логику (timecode, маппинг conform, гейты качества) и не требуют
-запущенного DaVinci Resolve. Конфиг линтера/типов — в `pyproject.toml`.
+CI (`.github/workflows/ci.yml`) runs ruff + mypy + pytest on every push/PR.
+Optional local hooks: `pre-commit install`. Module map:
+[`docs/architecture.md`](docs/architecture.md).
 
-CI (`.github/workflows/ci.yml`) гоняет ruff + mypy + pytest на каждый push/PR.
-Локальные хуки — `pre-commit install` (конфиг в `.pre-commit-config.yaml`).
+## License
 
-## Лицензия
-
-MIT (при необходимости уточните у автора проекта).
+See repository.

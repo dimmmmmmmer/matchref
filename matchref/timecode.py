@@ -44,6 +44,9 @@ def format_timecode(frame: int, fmt: TimecodeFormat) -> str:
 
 
 def _non_drop_to_frames(h: int, m: int, s: int, f: int, fps: float) -> int:
+    # NB: uses the fractional rate on purpose (conform offset math interprets a
+    # timecode against true elapsed time), so parse/format do NOT round-trip for
+    # non-integer fps like 23.976 — see test_fps.test_timecode_parsing_uses_format_fps.
     return int(round(((h * 3600 + m * 60 + s) * fps) + f))
 
 
@@ -65,18 +68,24 @@ def _drop_frame_to_frames(h: int, m: int, s: int, f: int) -> int:
 
 
 def _frames_to_drop_frame(frame: int) -> str:
+    # 29.97 drop-frame: skip labels ;00 and ;01 at the top of every minute except
+    # every tenth. Reconstruct the wall-clock label by adding the dropped labels
+    # back to the real frame index (canonical algorithm), then split into HH:MM:SS;FF.
+    drop = 2
+    frames_per_10min = 17982
+    frames_per_min = 1798
     f = int(frame)
-    d = f // 17982
-    m = f % 17982
-    if m < 2:
-        f = d * 17982 + m
+    d = f // frames_per_10min
+    m = f % frames_per_10min
+    if m < drop:
+        f += 18 * d
     else:
-        f = d * 17982 + 2 + (((m - 2) // 1798) * 2) + ((m - 2) % 1798)
+        f += 18 * d + drop * ((m - drop) // frames_per_min)
     ff = f % 30
-    total_seconds = f // 30
-    h, rem = divmod(total_seconds, 3600)
-    m, s = divmod(rem, 60)
-    return f"{h:02d}:{m:02d}:{s:02d};{ff:02d}"
+    s = (f // 30) % 60
+    mm = (f // (30 * 60)) % 60
+    hh = (f // (30 * 3600)) % 24
+    return f"{hh:02d}:{mm:02d}:{s:02d};{ff:02d}"
 
 
 def infer_fps_from_edl_header(line: str, default: float) -> TimecodeFormat:
