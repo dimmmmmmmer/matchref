@@ -625,14 +625,34 @@ class TransformAnalyzer:
                 and float(sample.ecc_score) >= confident_score
                 and min_scale_apply <= float(sample.scale) <= max_scale_apply
             ):
+                # Breaking after one confident sample is safe only if the clip is
+                # static. With keyframing on, a single (even very confident) MID
+                # match can't distinguish a static zoom from an animated ramp —
+                # detecting the ramp needs >=2 ok samples. So require >=2 ok samples
+                # that agree on zoom before short-circuiting; otherwise keep sampling.
+                ok_so_far = [s for s in result.samples if s.ok]
+                keyframing = bool(self.config.get("apply_keyframes_on_variance", True))
+                static_confirmed = confident_break_allowed(
+                    [float(s.scale) for s in ok_so_far],
+                    keyframing,
+                    float(self.config.get("keyframe_zoom_spread", 1.06)),
+                )
+                if static_confirmed:
+                    self.logger.info(
+                        "[%s %s] confident match (score %.4f >= %.2f) — skipping remaining samples",
+                        result.clip_name,
+                        point.value,
+                        sample.ecc_score,
+                        confident_score,
+                    )
+                    break
                 self.logger.info(
-                    "[%s %s] confident match (score %.4f >= %.2f) — skipping remaining samples",
+                    "[%s %s] confident match (%.4f) but keyframing on and reframe not yet "
+                    "confirmed static — sampling more to rule out an animated reframe",
                     result.clip_name,
                     point.value,
                     sample.ecc_score,
-                    confident_score,
                 )
-                break
 
         ok_samples = [s for s in result.samples if s.ok]
 
@@ -900,3 +920,23 @@ def _clip_name(item: Any) -> str:
         return item.GetName() or "?"
     except Exception:
         return "?"
+
+
+def confident_break_allowed(
+    ok_scales: list[float],
+    keyframing: bool,
+    zoom_spread_limit: float,
+) -> bool:
+    """Whether a confident sample may short-circuit the remaining samples.
+
+    Safe immediately when keyframing is off (we only ever apply one static value).
+    With keyframing on, a single confident MID match cannot tell a static zoom from
+    an animated ramp, so require >=2 ok samples that agree on zoom before stopping;
+    otherwise keep sampling so an animated reframe can still be detected.
+    """
+    if not keyframing:
+        return True
+    if len(ok_scales) < 2:
+        return False
+    _, _, spread = scale_spread(ok_scales)
+    return spread <= zoom_spread_limit

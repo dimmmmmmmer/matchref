@@ -240,6 +240,16 @@ class EditTransformApplier:
         except Exception:
             pass
 
+    # Tolerance (in the property's own units) when verifying a written value was
+    # accepted by Resolve. Generous enough to absorb internal re-quantisation.
+    _READBACK_TOL = {
+        "ZoomX": 0.01,
+        "ZoomY": 0.01,
+        "Pan": 1.0,
+        "Tilt": 1.0,
+        "RotationAngle": 0.1,
+    }
+
     def _set_edit_properties(self, item: Any, resolved: Any) -> None:
         setter = _callable(item, "SetProperty")
         if setter is None:
@@ -256,6 +266,38 @@ class EditTransformApplier:
         if self.config.get("match_rotation", True):
             props["RotationAngle"] = float(resolved.edit_rotation)
 
+        # A half-written transform (e.g. Zoom set, Pan rejected) is worse than no
+        # write at all — it silently mis-places the clip while reporting success.
+        # Treat any SetProperty failure as a hard error so the clip is flagged.
+        failed = [key for key, value in props.items() if not setter(key, value)]
+        if failed:
+            raise RuntimeError(
+                f"SetProperty rejected: {', '.join(failed)} (clip left partially transformed)"
+            )
+
+        if bool(self.config.get("verify_apply_readback", True)):
+            self._verify_written(item, props)
+
+    def _verify_written(self, item: Any, props: dict[str, float | bool]) -> None:
+        """Read back numeric properties and confirm Resolve accepted the values."""
+        getter = _callable(item, "GetProperty")
+        if getter is None:
+            self.logger.debug("GetProperty unavailable — skipping apply read-back.")
+            return
+        mismatches: list[str] = []
         for key, value in props.items():
-            if not setter(key, value):
-                self.logger.warning("SetProperty(%s) returned False", key)
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                continue
+            tol = self._READBACK_TOL.get(key, 0.01)
+            try:
+                actual = float(getter(key))
+            except (TypeError, ValueError):
+                # Property not readable as a number on this build — don't block.
+                continue
+            if abs(actual - float(value)) > tol:
+                mismatches.append(f"{key}: wrote {float(value):.4f}, read {actual:.4f}")
+        if mismatches:
+            raise RuntimeError(
+                "Apply not confirmed (Resolve value differs after write): "
+                + "; ".join(mismatches)
+            )
