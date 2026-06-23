@@ -1,9 +1,22 @@
 #!/usr/bin/env bash
-# Install MatchRef launcher into DaVinci Resolve Scripts/Utility (macOS).
+# Install the MatchRef launcher into the DaVinci Resolve Scripts/Utility folder.
+# Works on macOS and Linux. (Windows: use "Install MatchRef (Windows).bat".)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RESOLVE_UTILITY="${HOME}/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts/Utility"
+
+case "$(uname -s)" in
+  Darwin)
+    RESOLVE_UTILITY="${HOME}/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts/Utility"
+    ;;
+  Linux)
+    RESOLVE_UTILITY="${HOME}/.local/share/DaVinciResolve/Fusion/Scripts/Utility"
+    ;;
+  *)
+    echo "Unsupported OS for this installer. On Windows run 'Install MatchRef (Windows).bat'." >&2
+    exit 1
+    ;;
+esac
 
 mkdir -p "$RESOLVE_UTILITY"
 

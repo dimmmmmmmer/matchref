@@ -17,13 +17,18 @@ them by hand.
 ## Install (macOS)
 
 1. Download this project (green **Code → Download ZIP** on GitHub) and unzip it.
-2. Double-click **`Install MatchRef.command`**.
+2. Run the installer for your OS — it sets up a Python environment and copies
+   MatchRef into Resolve's scripts folder (the first run takes a minute):
 
-   It sets up a Python environment and copies MatchRef into Resolve's scripts
-   folder. The first run takes a minute.
+   | OS | Installer |
+   |----|-----------|
+   | **macOS** | double-click **`Install MatchRef.command`** |
+   | **Windows** | double-click **`Install MatchRef (Windows).bat`** |
+   | **Linux** | run **`Install MatchRef (Linux).sh`** (or `bash "Install MatchRef (Linux).sh"`) |
 
-   > macOS may block a downloaded script the first time: if you see
+   > **macOS** may block a downloaded script the first time: if you see
    > *"unidentified developer"*, right-click the file → **Open** → **Open**.
+   > **Windows** SmartScreen: click *More info → Run anyway*.
 
 3. In DaVinci Resolve: **Workspace → Scripts → Utility → MatchRef**.
 
@@ -31,11 +36,11 @@ them by hand.
    Python without the dependencies and fails silently.
 
 <details>
-<summary>Manual install (or non-macOS)</summary>
+<summary>Manual install</summary>
 
 ```bash
 cd /path/to/matchref
-./setup.sh                 # create .venv and install dependencies
+./setup.sh                 # create .venv and install dependencies (macOS/Linux)
 ./install_resolve.sh       # copy into the Resolve Scripts/Utility folder
 ```
 
@@ -113,6 +118,8 @@ CI (`.github/workflows/ci.yml`) runs ruff + mypy + pytest on every push/PR.
 Optional local hooks: `pre-commit install`. Module map:
 [`docs/architecture.md`](docs/architecture.md).
 
+Contributions are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
 ## License
 
-See repository.
+Licensed under the [Apache License 2.0](LICENSE).
