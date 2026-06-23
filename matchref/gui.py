@@ -290,7 +290,7 @@ class MatchRefWindow(QMainWindow):
         if self.dry_run_cb.isChecked():
             self.run_btn.setText("Analyze (Dry Run)")
         else:
-            self.run_btn.setText("Analyze & Apply Transforms")
+            self.run_btn.setText("Analyze and Apply Transforms")
 
     def _browse_reference(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
