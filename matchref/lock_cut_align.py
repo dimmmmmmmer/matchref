@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from matchref.config import AppConfig
 
 
-def clip_hub_start(timeline_item: object) -> int:
+def clip_hub_start(timeline_item: Any) -> int:
     try:
         return int(timeline_item.GetStart())
     except Exception:

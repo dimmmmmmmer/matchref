@@ -210,7 +210,7 @@ def refine_multi_strategy(
     orders = strategy_orders_from_config(config)
     best_edit: ClipEditTransform | None = None
     best_ncc = -1.0
-    best_label = orders[0] if orders else "zoom→position→rotation"
+    best_label = _order_label(orders[0]) if orders else "zoom→position→rotation"
 
     early_exit = _refine_early_exit_enabled(config)
     for order in orders:

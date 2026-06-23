@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Literal
 
 import cv2
+import numpy as np
 
 SeekMode = Literal["refine", "msec", "frames"]
 
@@ -59,7 +60,7 @@ def read_frame_at_index(
     *,
     mode: SeekMode = "refine",
     index_offset: int = 0,
-) -> tuple[bool, object | None, int]:
+) -> tuple[bool, np.ndarray | None, int]:
     """
     Read one BGR frame at `frame_index` (0-based).
 

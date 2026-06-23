@@ -359,7 +359,7 @@ class TransformAnalyzer:
                     str(self.config.get("input_scaling", "fit")),
                 )
             else:
-                online = online_raw
+                online = online_raw  # type: ignore[assignment]
                 if online is not None and compensate:
                     online = apply_clip_edit_to_frame(online, baseline, canvas_size, self.config)
                 elif online is not None and bool(self.config.get("compensate_clip_transform", False)):
@@ -508,6 +508,7 @@ class TransformAnalyzer:
                 )
             refine_outcome = None
             if can_refine and warp is not None and not skip_refine:
+                assert online_raw is not None  # can_refine implies online_raw is not None
                 bl = None if absolute else baseline
                 guess = initial_edit_from_warp(warp, canvas, self.config, bl)
                 refine_outcome = refine_resolve_edit(
@@ -666,9 +667,9 @@ class TransformAnalyzer:
             best = max(ok_samples, key=lambda s: s.ecc_score)
             min_scale = float(self.config.get("min_alignment_scale", 0.4))
             max_scale = float(self.config.get("max_alignment_scale", 2.5))
-            reasons: list[str] = []
+            select_reasons: list[str] = []
             if not (min_scale <= best.scale <= max_scale):
-                reasons.append(
+                select_reasons.append(
                     f"best sample scale {best.scale:.3f} outside [{min_scale}, {max_scale}]"
                 )
             # Samples may differ across the clip because the reframe is *keyframed*
@@ -686,12 +687,12 @@ class TransformAnalyzer:
                     # best sample is applied (handled below).
                     lo, hi, spread = scale_spread([s.scale for s in ok_samples])
                     if spread > max_scale_spread(self.config):
-                        reasons.append(
+                        select_reasons.append(
                             f"samples disagree {lo:.3f}…{hi:.3f} (×{spread:.2f}), not a smooth ramp"
                         )
-            result.problem = bool(reasons)
+            result.problem = bool(select_reasons)
             result.animated = animated and not result.problem
-            for msg in reasons:
+            for msg in select_reasons:
                 result.warnings.append(msg)
                 self.logger.warning("Quality check: %s — %s", result.clip_name, msg)
             if not result.problem and result.animated:

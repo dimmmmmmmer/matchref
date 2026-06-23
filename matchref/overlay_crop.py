@@ -38,7 +38,7 @@ def overlay_margins_fraction(config: AppConfig) -> tuple[float, float, float, fl
 
     custom = config.get("match_overlay_margins")
     if isinstance(custom, (list, tuple)) and len(custom) == 4:
-        return tuple(float(v) for v in custom)
+        return (float(custom[0]), float(custom[1]), float(custom[2]), float(custom[3]))
 
     uniform = float(config.get("match_crop_margin_ratio", 0.08))
     bottom = float(config.get("match_overlay_margin_bottom", uniform * 1.5))

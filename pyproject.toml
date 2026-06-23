@@ -11,3 +11,10 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["E402"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["matchref"]
+ignore_missing_imports = true   # cv2/numpy/PySide6 ship no/partial stubs
+warn_unused_ignores = true
+warn_redundant_casts = true

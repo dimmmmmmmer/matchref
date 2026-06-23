@@ -13,7 +13,7 @@ from matchref.config import AppConfig
 def connect_resolve() -> Any:
     """Connect to Resolve; supports in-app and external launcher."""
     try:
-        import DaVinciResolveScript as dvr_script  # type: ignore
+        import DaVinciResolveScript as dvr_script
     except ImportError:
         dvr_script = None
 
@@ -35,7 +35,7 @@ def connect_resolve() -> Any:
     if resolve is None:
         _inject_resolve_module_paths()
         try:
-            import DaVinciResolveScript as dvr_script  # type: ignore
+            import DaVinciResolveScript as dvr_script
 
             resolve = dvr_script.scriptapp("Resolve")
         except Exception as exc:

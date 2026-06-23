@@ -126,6 +126,7 @@ API Resolve не всегда отдаёт выделение таймлайна
 
 - Шаблон: `config/default_config.json`
 - Пользовательский: `config/user_config.json` (создаётся из GUI)
+- **Полный справочник всех ключей:** [`docs/config.md`](docs/config.md)
 
 Ключевые параметры:
 
@@ -237,10 +238,14 @@ python -m pip install -r requirements-dev.txt
 python -m pytest tests/ -q     # модульные тесты (без Resolve)
 ruff check matchref tests       # линтер
 ruff format matchref tests      # форматирование
+mypy                            # проверка типов
 ```
 
 Тесты покрывают чистую логику (timecode, маппинг conform, гейты качества) и не требуют
-запущенного DaVinci Resolve. Конфиг линтера — в `pyproject.toml`.
+запущенного DaVinci Resolve. Конфиг линтера/типов — в `pyproject.toml`.
+
+CI (`.github/workflows/ci.yml`) гоняет ruff + mypy + pytest на каждый push/PR.
+Локальные хуки — `pre-commit install` (конфиг в `.pre-commit-config.yaml`).
 
 ## Лицензия
 

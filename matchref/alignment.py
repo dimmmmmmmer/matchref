@@ -110,7 +110,7 @@ def prepare_gray_uint8(
     use_clahe: bool = True,
     edge_emphasis: float = 0.0,
 ) -> np.ndarray:
-    gray = _even_crop(_to_gray(image, max_width)).astype(np.uint8)
+    gray: np.ndarray = _even_crop(_to_gray(image, max_width)).astype(np.uint8)
     if use_clahe:
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         gray = clahe.apply(gray)
@@ -252,7 +252,7 @@ def _run_ecc(
             gauss,
         )
     else:
-        score, warp_out = cv2.findTransformECC(
+        score, warp_out = cv2.findTransformECC(  # type: ignore[call-overload]
             template,
             input_img,
             warp,
@@ -338,7 +338,7 @@ def _align_features(
     ratio_thresh = float(config.get("feature_match_ratio", 0.75))
     min_inlier_ratio = float(config.get("feature_min_inlier_ratio", 0.15))
 
-    orb = cv2.ORB_create(nfeatures=n_features)
+    orb = cv2.ORB_create(nfeatures=n_features)  # type: ignore[attr-defined]
     kp_off, des_off = orb.detectAndCompute(offline_u8, mask)
     kp_on, des_on = orb.detectAndCompute(online_u8, mask)
     if des_off is None or des_on is None or len(kp_off) < 8 or len(kp_on) < 8:
@@ -357,8 +357,12 @@ def _align_features(
     if len(good) < 8:
         return None
 
-    offline_pts = np.float32([kp_off[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
-    online_pts = np.float32([kp_on[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
+    offline_pts = np.array(
+        [kp_off[m.queryIdx].pt for m in good], dtype=np.float32
+    ).reshape(-1, 1, 2)
+    online_pts = np.array(
+        [kp_on[m.trainIdx].pt for m in good], dtype=np.float32
+    ).reshape(-1, 1, 2)
 
     warp, inliers = cv2.estimateAffinePartial2D(
         online_pts,
