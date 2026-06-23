@@ -11,12 +11,21 @@ from matchref.conform_paths import assign_conform_path, conform_path_from_config
 from matchref.debug_frames import resolve_debug_dir
 from matchref.logging_report import setup_logging
 from matchref.pipeline import MatchRefPipeline
+from matchref.selection_ui import (
+    RESOLVE_COLORS,
+    SELECTION_MODES,
+    apply_selection_to_config,
+    mode_uses_color,
+    mode_uses_track,
+    selection_from_config,
+)
 
 try:
     from PySide6.QtCore import QObject, QThread, Signal
     from PySide6.QtWidgets import (
         QApplication,
         QCheckBox,
+        QComboBox,
         QDoubleSpinBox,
         QFileDialog,
         QGridLayout,
@@ -28,6 +37,7 @@ try:
         QMessageBox,
         QProgressBar,
         QPushButton,
+        QSpinBox,
         QTextEdit,
         QVBoxLayout,
         QWidget,
@@ -116,6 +126,26 @@ class MatchRefWindow(QMainWindow):
         conform_browse.clicked.connect(self._browse_conform)
         conform_layout.addWidget(conform_browse)
         layout.addWidget(conform_group)
+
+        select_group = QGroupBox("Clips to process")
+        select_layout = QGridLayout(select_group)
+        select_layout.addWidget(QLabel("Pick by"), 0, 0)
+        self.selection_mode_combo = QComboBox()
+        for value, label in SELECTION_MODES:
+            self.selection_mode_combo.addItem(label, value)
+        self.selection_mode_combo.currentIndexChanged.connect(self._on_selection_mode_changed)
+        select_layout.addWidget(self.selection_mode_combo, 0, 1)
+        self.selection_color_label = QLabel("Color")
+        select_layout.addWidget(self.selection_color_label, 1, 0)
+        self.selection_color_combo = QComboBox()
+        self.selection_color_combo.addItems(RESOLVE_COLORS)
+        select_layout.addWidget(self.selection_color_combo, 1, 1)
+        self.selection_track_label = QLabel("Video track")
+        select_layout.addWidget(self.selection_track_label, 2, 0)
+        self.selection_track_spin = QSpinBox()
+        self.selection_track_spin.setRange(1, 99)
+        select_layout.addWidget(self.selection_track_spin, 2, 1)
+        layout.addWidget(select_group)
 
         toggles = QGroupBox("Match Options")
         toggle_layout = QGridLayout(toggles)
@@ -215,7 +245,26 @@ class MatchRefWindow(QMainWindow):
         self.debug_cb.setChecked(bool(self.config.get("debug_save_frames", False)))
         self.debug_dir_edit.setText(str(self.config.get("debug_output_dir", "")))
         self.ecc_threshold_spin.setValue(float(self.config.get("ecc_threshold", 0.85)))
+
+        mode, color, track = selection_from_config(self.config)
+        mode_idx = self.selection_mode_combo.findData(mode)
+        self.selection_mode_combo.setCurrentIndex(mode_idx if mode_idx >= 0 else 0)
+        color_idx = self.selection_color_combo.findText(color)
+        self.selection_color_combo.setCurrentIndex(max(0, color_idx))
+        self.selection_track_spin.setValue(track)
+        self._on_selection_mode_changed()
+
         self._update_run_button_label()
+
+    def _on_selection_mode_changed(self) -> None:
+        """Show the color picker / track spinner only when the mode needs them."""
+        mode = str(self.selection_mode_combo.currentData() or "auto")
+        uses_color = mode_uses_color(mode)
+        uses_track = mode_uses_track(mode)
+        self.selection_color_label.setVisible(uses_color)
+        self.selection_color_combo.setVisible(uses_color)
+        self.selection_track_label.setVisible(uses_track)
+        self.selection_track_spin.setVisible(uses_track)
 
     def _sync_ui_to_config(self) -> None:
         self.config.set("offline_reference_path", self.ref_path_edit.text().strip())
@@ -228,6 +277,12 @@ class MatchRefWindow(QMainWindow):
         self.config.set("debug_save_frames", self.debug_cb.isChecked())
         self.config.set("debug_output_dir", self.debug_dir_edit.text().strip())
         self.config.set("ecc_threshold", self.ecc_threshold_spin.value())
+        apply_selection_to_config(
+            self.config,
+            mode=str(self.selection_mode_combo.currentData() or "auto"),
+            color=self.selection_color_combo.currentText(),
+            track_index=self.selection_track_spin.value(),
+        )
         self.config.save(USER_CONFIG_PATH)
         self._update_run_button_label()
 
@@ -265,6 +320,9 @@ class MatchRefWindow(QMainWindow):
             self.dry_run_cb,
             self.debug_cb,
             self.ecc_threshold_spin,
+            self.selection_mode_combo,
+            self.selection_color_combo,
+            self.selection_track_spin,
         ):
             w.setEnabled(not busy)
 

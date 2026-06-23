@@ -58,8 +58,10 @@ python main.py
 2. Render or locate the **offline reference** video.
 3. *(Optional but recommended)* Have the conform **EDL or XML** ready — it makes
    frame mapping exact.
-4. Flag the shots to process: right-click each online clip →
-   **Clip Color → Purple**. Don't color the lock cut on the timeline.
+4. Mark the shots to process. In **Clips to process** choose how MatchRef finds
+   them — by **clip color**, by **flag**, the current **timeline selection**, **all
+   clips**, or a **whole track** — and pick the color. (Default: clip color Purple.)
+   Don't mark the lock cut on the timeline.
 5. Launch MatchRef, point it at the offline reference (and conform file), and
    run it. With Dry Run off it writes straight to the Edit Inspector.
 
@@ -69,15 +71,17 @@ it reads the values back to confirm Resolve accepted them.
 
 ## Clip selection
 
-Set `clip_selection_mode` in `config/user_config.json`:
+Choose this in the **Clips to process** panel of the GUI (or via
+`clip_selection_mode` in config):
 
 | Mode | Behavior |
 |------|----------|
-| `auto` (default) | Selected API → **Clip Color** → flags → all filtered |
-| `clip_color` | Clips with `selection_clip_color` (Purple, …) |
-| `selected` | Only `GetSelectedTimelineItems()` |
-| `all_filtered` | All video clips except the lock cut |
-| `track` | All clips on `video_track_index` |
+| Automatic (default) | timeline selection → **clip color** → flags → all filtered |
+| By clip color | clips tagged with the chosen color |
+| By flag | clips flagged with the chosen color |
+| Selected in the timeline | the current `GetSelectedTimelineItems()` |
+| All clips | every video clip except the lock cut |
+| A whole video track | all clips on the chosen track |
 
 ## Configuration
 
