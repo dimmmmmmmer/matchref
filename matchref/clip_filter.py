@@ -39,11 +39,9 @@ def should_skip_clip(
     """
     Return (skip, reason) for clips that must not be analyzed.
 
-    Skips the lock cut sitting on the timeline when the same file is used as reference.
+    Skips the lock cut sitting on the timeline when the same file is used as
+    reference, and clips whose media is offline (no linked file on disk).
     """
-    if not bool(config.get("skip_reference_on_timeline", True)):
-        return False, ""
-
     media_item = None
     try:
         media_item = timeline_item.GetMediaPoolItem()
@@ -51,41 +49,52 @@ def should_skip_clip(
         pass
     media_path = resolve_media_path(media_item)
 
-    if offline_reference and is_reference_media(media_path, offline_reference):
-        return True, "same file as offline reference (lock cut on timeline)"
-
-    exclude_tracks = config.get("exclude_track_indices") or []
-    try:
-        _, track_index = timeline_item.GetTrackTypeAndIndex()
-        if track_index in exclude_tracks:
-            return True, f"track V{track_index} excluded (reference track)"
-    except Exception:
-        pass
-
-    try:
-        duration = int(timeline_item.GetDuration())
-    except Exception:
-        duration = 0
-
-    ref_max = int(config.get("reference_clip_max_duration_frames", 0))
-    if ref_max <= 0 and offline_frame_count > 0:
-        ref_max = int(offline_frame_count * 0.9)
-
-    if ref_max > 0 and duration >= ref_max:
+    # Reference / track / name skips (their specific reasons take precedence over
+    # the generic offline-media reason below).
+    if bool(config.get("skip_reference_on_timeline", True)):
         if offline_reference and is_reference_media(media_path, offline_reference):
-            return True, "full-length lock cut (matches reference file)"
+            return True, "same file as offline reference (lock cut on timeline)"
+
+        exclude_tracks = config.get("exclude_track_indices") or []
         try:
-            clip_name = (timeline_item.GetName() or "").lower()
+            _, track_index = timeline_item.GetTrackTypeAndIndex()
+            if track_index in exclude_tracks:
+                return True, f"track V{track_index} excluded (reference track)"
         except Exception:
-            clip_name = ""
-        patterns = config.get("skip_clip_name_patterns") or [
-            "lock cut",
-            "offline ref",
-            "offline reference",
-        ]
-        for pattern in patterns:
-            if pattern and str(pattern).lower() in clip_name:
-                return True, f"full-length reference clip ({pattern!r})"
+            pass
+
+        try:
+            duration = int(timeline_item.GetDuration())
+        except Exception:
+            duration = 0
+
+        ref_max = int(config.get("reference_clip_max_duration_frames", 0))
+        if ref_max <= 0 and offline_frame_count > 0:
+            ref_max = int(offline_frame_count * 0.9)
+
+        if ref_max > 0 and duration >= ref_max:
+            if offline_reference and is_reference_media(media_path, offline_reference):
+                return True, "full-length lock cut (matches reference file)"
+            try:
+                clip_name = (timeline_item.GetName() or "").lower()
+            except Exception:
+                clip_name = ""
+            patterns = config.get("skip_clip_name_patterns") or [
+                "lock cut",
+                "offline ref",
+                "offline reference",
+            ]
+            for pattern in patterns:
+                if pattern and str(pattern).lower() in clip_name:
+                    return True, f"full-length reference clip ({pattern!r})"
+
+    # Offline media: no linked file, or the file is missing on disk. Skip cleanly
+    # (with a reason) rather than failing every sample with "frame unavailable".
+    if bool(config.get("skip_offline_media", True)):
+        if not media_path:
+            return True, "media offline (no linked file)"
+        if not Path(media_path).is_file():
+            return True, "media offline (file not found on disk)"
 
     return False, ""
 

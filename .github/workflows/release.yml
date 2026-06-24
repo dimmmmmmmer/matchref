@@ -1,0 +1,22 @@
+name: Release
+
+# Push a tag like v1.0.0 to publish a GitHub Release. GitHub attaches the source
+# archives (zip/tar.gz) automatically — that zip is what users download and run
+# the installer from.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true

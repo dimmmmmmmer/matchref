@@ -58,6 +58,18 @@ Please:
 3. Open a PR; CI (ruff + mypy + pytest) must pass.
 4. Keep PRs focused — one logical change per PR is easier to review.
 
+## Releases
+
+Bump `__version__` in `matchref/__init__.py`, then push a matching tag:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The `release` workflow publishes a GitHub Release with auto-generated notes;
+GitHub attaches the source zip that users download and run the installer from.
+
 ## Project layout
 
 See [`docs/architecture.md`](docs/architecture.md) for the module map and

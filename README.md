@@ -12,11 +12,12 @@ them by hand.
 ## Requirements
 
 - DaVinci Resolve **Studio** 20 or newer (Scripting API)
-- macOS with Python 3 (the installer creates an isolated environment)
+- Python 3 (the installer creates an isolated environment for you)
 
-## Install (macOS)
+## Install
 
-1. Download this project (green **Code → Download ZIP** on GitHub) and unzip it.
+1. Download the **[latest release](https://github.com/dimmmmmmmer/matchref/releases/latest)**
+   (under *Assets → Source code (zip)*) and unzip it.
 2. Run the installer for your OS — it sets up a Python environment and copies
    MatchRef into Resolve's scripts folder (the first run takes a minute):
 
@@ -34,23 +35,6 @@ them by hand.
 
    Do **not** use *Scripts → matchref → main* — that path runs Resolve's bare
    Python without the dependencies and fails silently.
-
-<details>
-<summary>Manual install</summary>
-
-```bash
-cd /path/to/matchref
-./setup.sh                 # create .venv and install dependencies (macOS/Linux)
-./install_resolve.sh       # copy into the Resolve Scripts/Utility folder
-```
-
-Run the GUI outside Resolve for debugging:
-
-```bash
-source .venv/bin/activate
-python main.py
-```
-</details>
 
 ## Workflow
 
@@ -83,16 +67,6 @@ Choose this in the **Clips to process** panel of the GUI (or via
 | All clips | every video clip except the lock cut |
 | A whole video track | all clips on the chosen track |
 
-## Configuration
-
-- Defaults: `config/default_config.json`
-- Your overrides: `config/user_config.json` (written by the GUI)
-- **Full reference for every key:** [`docs/config.md`](docs/config.md)
-
-Common ones: `dry_run` (analyze without writing), `ecc_threshold` (match
-strictness), `input_scaling` (`fit`/`fill`/`stretch` — must match your project's
-Mismatched-Resolution setting), `edit_round_mode` (`nearest`/`up`).
-
 ## How frame mapping works
 
 With an EDL/XML conform, record timecodes are mapped into the timeline hub for
@@ -108,22 +82,7 @@ resolution come from the open Resolve timeline. See
 - Heavy grade, crop, or blow-out differences lower the match score.
 - Transforms are written via the Edit Inspector only (not Fusion).
 
-## Development
-
-```bash
-source .venv/bin/activate
-pip install -r requirements-dev.txt
-pytest -q          # unit tests (no Resolve required)
-ruff check .       # lint
-mypy               # type check
-```
-
-CI (`.github/workflows/ci.yml`) runs ruff + mypy + pytest on every push/PR.
-Optional local hooks: `pre-commit install`. Module map:
-[`docs/architecture.md`](docs/architecture.md).
-
-Contributions are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
-
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE).
+Licensed under the [Apache License 2.0](LICENSE). Contributions welcome — see
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
