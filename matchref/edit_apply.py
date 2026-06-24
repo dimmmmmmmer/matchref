@@ -93,6 +93,14 @@ class EditTransformApplier:
         except Exception:
             pass
 
+        # Perspective match is applied as a Fusion CornerPin (Edit can't do it) when
+        # perspective_match_enabled and a homography was solved.
+        from matchref.cornerpin_apply import CornerPinApplier, should_use_cornerpin
+
+        if should_use_cornerpin(result, self.config):
+            CornerPinApplier(self.config, self._size, self.logger).apply(item, result)
+            return
+
         # Animated clips can be keyframed via a Fusion Transform node (cleaner than
         # the Edit-page playhead keyframes) when apply_via_fusion is enabled.
         from matchref.fusion_apply import FusionTransformApplier, should_use_fusion

@@ -207,8 +207,8 @@
 | Ключ | Дефолт | Назначение |
 |------|--------|-----------|
 | `media_cache_size` | `2` | Размер LRU-кэша декодеров source. |
-| `lens_distortion_match_enabled` | `false` | Матчинг дисторсии (экспериментально). |
-| `perspective_match_enabled` | `false` | Перспективный матчинг (экспериментально). |
+| `lens_distortion_match_enabled` | `false` | Матчинг дисторсии (заглушка, отложено). |
+| `perspective_match_enabled` | `false` | **Прототип.** Решает гомографию на совпавшем кадре и применяет перспективу через узел Fusion CornerPin. Требует валидации в Resolve — см. [`docs/fusion-apply-plan.md`](fusion-apply-plan.md). |
 
 ## Отладка
 

@@ -54,9 +54,11 @@ clip ──► Fusion comp ──► Transform node (keyframed) ──► output
 
 ## Roadmap after validation
 
-- Perspective: solve a homography (ECC `MOTION_HOMOGRAPHY`, already available) and
-  map its four mapped corners to a CornerPin node's `TopLeft…BottomRight` inputs.
-  The corner math is implemented and tested in `matchref/perspective.py`
-  (`homography_corners` → `corners_to_cornerpin`); the CornerPin node creation is
-  the Resolve-only piece left to wire once the Fusion backend is validated.
+- Perspective **(prototype implemented)**: `perspective.solve_homography` solves an
+  ECC `MOTION_HOMOGRAPHY` on the matched pair and rescales it to the timeline raster
+  (`rescale_homography`); `perspective.cornerpin_from_warp` maps it to normalized
+  CornerPin inputs (all unit-tested). When `perspective_match_enabled`, the analyzer
+  stores the homography on the sample and `cornerpin_apply.CornerPinApplier` (PROTOTYPE)
+  adds a Fusion CornerPin node. To validate in Resolve: the `AddTool("CornerPositioner")`
+  call and the `TopLeft…BottomLeft` input names/order.
 - Surface `apply_via_fusion` in the GUI once the prototype is confirmed.
