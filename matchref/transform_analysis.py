@@ -248,18 +248,35 @@ class TransformAnalyzer:
 
         return report
 
-    def analyze_one(self, timeline_item: Any) -> ClipAnalysisResult | None:
+    def analyze_one(
+        self,
+        timeline_item: Any,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> ClipAnalysisResult | None:
         if not self._batch_ready:
             raise RuntimeError("Call prepare_batch() before analyze_one().")
-        return self._analyze_single(timeline_item)
+        return self._analyze_single(timeline_item, should_cancel)
 
-    def _analyze_single(self, timeline_item: Any) -> ClipAnalysisResult | None:
-        """Analyze one clip: setup → per-sample matching → clip-level decision."""
+    def _analyze_single(
+        self,
+        timeline_item: Any,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> ClipAnalysisResult | None:
+        """Analyze one clip: setup → per-sample matching → clip-level decision.
+
+        ``should_cancel`` is checked between samples and threaded into the refine
+        search, so Stop interrupts within a clip (not only at clip boundaries).
+        A clip cancelled mid-analysis returns None and is not applied.
+        """
         ctx = self._begin_clip(timeline_item)
         if ctx is None:
             return None
         for point, local_frame in ctx.control_points:
-            sample = self._process_sample(ctx, point, local_frame)
+            if should_cancel is not None and should_cancel():
+                return None
+            sample = self._process_sample(ctx, point, local_frame, should_cancel)
+            if should_cancel is not None and should_cancel():
+                return None  # refine was interrupted — discard the partial clip
             if self._should_stop_after(ctx, sample):
                 break
         self._finalize_clip(ctx)
@@ -525,7 +542,11 @@ class TransformAnalyzer:
         )
 
     def _process_sample(
-        self, ctx: _ClipContext, point: Any, local_frame: int
+        self,
+        ctx: _ClipContext,
+        point: Any,
+        local_frame: int,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> TransformSample:
         """Match one sample frame; populate it and append to the clip context."""
         result = ctx.result
@@ -645,6 +666,7 @@ class TransformAnalyzer:
                 config=self.config,
                 initial=guess,
                 warp=warp,
+                should_cancel=should_cancel,
             )
             sample.refined_edit = refine_outcome.edit
             sample.ecc_score = score_from_refine_ncc(refine_outcome.ncc)

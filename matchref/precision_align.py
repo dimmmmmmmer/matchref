@@ -178,6 +178,7 @@ def refine_resolve_edit(
     config: AppConfig,
     initial: ClipEditTransform,
     warp: np.ndarray | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> RefineOutcome:
     """
     Direct search on Resolve Edit (Zoom/Pan/Tilt/Rotation) to minimize picture error.
@@ -203,7 +204,9 @@ def refine_resolve_edit(
             tilt=initial.tilt * scale,
             rotation_deg=initial.rotation_deg,
         )
-        coarse = _refine_at_canvas(online_raw, offline_ref, (rw, rh), config, seed, warp)
+        coarse = _refine_at_canvas(
+            online_raw, offline_ref, (rw, rh), config, seed, warp, should_cancel=should_cancel
+        )
         edit = coarse.edit
         upscaled = ClipEditTransform(
             zoom_x=edit.zoom_x,
@@ -214,7 +217,8 @@ def refine_resolve_edit(
         )
         if bool(config.get("refine_fine_polish", True)):
             return _fine_polish(
-                online_raw, offline_ref, canvas_size, config, upscaled, coarse.strategy
+                online_raw, offline_ref, canvas_size, config, upscaled, coarse.strategy,
+                should_cancel=should_cancel,
             )
         return RefineOutcome(
             edit=quantize_clip_edit(upscaled, config),
@@ -227,10 +231,13 @@ def refine_resolve_edit(
     # No coarse downscale (canvas <= refine_max_width). Still run the fine polish so
     # the gradient zoom-lock and the position-parsimony (drop unjustified Pan/Tilt)
     # apply at every timeline resolution — they used to be skipped on small canvases.
-    direct = _refine_at_canvas(online_raw, offline_ref, canvas_size, config, initial, warp)
+    direct = _refine_at_canvas(
+        online_raw, offline_ref, canvas_size, config, initial, warp, should_cancel=should_cancel
+    )
     if bool(config.get("refine_fine_polish", True)):
         return _fine_polish(
-            online_raw, offline_ref, canvas_size, config, direct.edit, direct.strategy
+            online_raw, offline_ref, canvas_size, config, direct.edit, direct.strategy,
+            should_cancel=should_cancel,
         )
     return direct
 
@@ -242,6 +249,8 @@ def _fine_polish(
     config: AppConfig,
     start: ClipEditTransform,
     strategy: str,
+    *,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> RefineOutcome:
     """
     Sub-pixel polish at full resolution, seeded by the coarse result.
@@ -272,6 +281,8 @@ def _fine_polish(
         # (zoom, pan/tilt px, rotation deg) — small enough to stay in the basin.
         fine_steps = [[0.004, 2.0, 0.1], [0.001, 0.5, 0.03], [0.0003, 0.25, 0.0]]
     for z_step, p_step, r_step in fine_steps:
+        if should_cancel is not None and should_cancel():
+            break
         state = _coordinate_descent(
             state, cost, deltas=[z_step, p_step, p_step, r_step if use_rot else 0.0]
         )
@@ -366,6 +377,8 @@ def _refine_at_canvas(
     config: AppConfig,
     initial: ClipEditTransform,
     warp: np.ndarray | None = None,
+    *,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> RefineOutcome:
     width, height = int(canvas_size[0]), int(canvas_size[1])
     offline_fit = offline_ref
@@ -402,6 +415,7 @@ def _refine_at_canvas(
             initial=initial,
             cost_fn=lambda p: cost_full(p[0], p[1], p[2], p[3]),
             score_fn=ref.score,
+            should_cancel=should_cancel,
         )
         outcome.gradient_ncc = ref.gradient_ncc(
             _render_with_edit(online_raw, outcome.edit, canvas_size, config)

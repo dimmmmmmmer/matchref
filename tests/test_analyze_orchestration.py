@@ -37,7 +37,7 @@ def test_processes_every_control_point_then_finalizes() -> None:
     )
     seen: list[object] = []
     analyzer._begin_clip = lambda item: ctx  # type: ignore[method-assign]
-    analyzer._process_sample = lambda c, p, f: seen.append((p, f)) or p  # type: ignore[method-assign]
+    analyzer._process_sample = lambda c, p, f, sc=None: seen.append((p, f)) or p  # type: ignore[method-assign]
     analyzer._should_stop_after = lambda c, s: False  # type: ignore[method-assign]
     finalized: list[object] = []
     analyzer._finalize_clip = lambda c: finalized.append(c)  # type: ignore[method-assign]
@@ -54,10 +54,27 @@ def test_stop_after_short_circuits_remaining_samples() -> None:
     seen: list[object] = []
     finalized: list[object] = []
     analyzer._begin_clip = lambda item: ctx  # type: ignore[method-assign]
-    analyzer._process_sample = lambda c, p, f: seen.append(p) or p  # type: ignore[method-assign]
+    analyzer._process_sample = lambda c, p, f, sc=None: seen.append(p) or p  # type: ignore[method-assign]
     analyzer._should_stop_after = lambda c, s: s == "a"  # stop right after first  # type: ignore[method-assign]
     analyzer._finalize_clip = lambda c: finalized.append(c)  # type: ignore[method-assign]
 
     analyzer._analyze_single(object())
     assert seen == ["a"]  # b and c never processed
     assert finalized == [ctx]  # finalize still runs
+
+
+def test_cancel_mid_clip_returns_none_without_finalize() -> None:
+    analyzer = _bare_analyzer()
+    ctx = SimpleNamespace(control_points=[("a", 0), ("b", 12)], result="R")
+    seen: list[object] = []
+    finalized: list[object] = []
+    analyzer._begin_clip = lambda item: ctx  # type: ignore[method-assign]
+    analyzer._process_sample = lambda c, p, f, sc=None: seen.append(p) or p  # type: ignore[method-assign]
+    analyzer._should_stop_after = lambda c, s: False  # type: ignore[method-assign]
+    analyzer._finalize_clip = lambda c: finalized.append(c)  # type: ignore[method-assign]
+
+    result = analyzer._analyze_single(object(), should_cancel=lambda: True)
+
+    assert result is None       # cancelled clip is discarded
+    assert seen == []           # no sample processed (cancel checked first)
+    assert finalized == []      # finalize skipped on cancel

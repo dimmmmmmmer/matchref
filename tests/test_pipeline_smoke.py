@@ -45,7 +45,7 @@ class _StubAnalyzer:
     def prepare_batch(self, clips: list[_Clip]) -> tuple[list[_Clip], list[str]]:
         return clips, ["skipped-because-reference"]
 
-    def analyze_one(self, item: _Clip) -> ClipAnalysisResult | None:
+    def analyze_one(self, item: _Clip, should_cancel=None) -> ClipAnalysisResult | None:
         name = item.GetName()
         if name == "no-media":
             return None
