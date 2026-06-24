@@ -101,6 +101,14 @@ class MatchRefPipeline:
             filtered, skipped = analyzer.prepare_batch(clips)
             report.skipped.extend(skipped)
             total = len(filtered)
+            if total == 0 and report.skipped:
+                self._emit(
+                    on_message,
+                    f"All {len(report.skipped)} selected clip(s) were skipped — nothing to "
+                    "process. Reasons:",
+                )
+                for reason in report.skipped[:10]:
+                    self._emit(on_message, f"  • {reason}")
             self._emit(on_message, f"Processing {total} clip(s)…")
 
             for index, item in enumerate(filtered, start=1):

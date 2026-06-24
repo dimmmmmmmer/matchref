@@ -38,6 +38,7 @@ from matchref.frame_provider import FrameProvider, resolve_media_path, sample_po
 from matchref.lock_cut_align import (
     clip_hub_start,
     detect_lock_cut_hub_origin,
+    reference_coverage_warning,
     timeline_end_frame,
 )
 from matchref.logging_report import log_sample
@@ -205,6 +206,11 @@ class TransformAnalyzer:
             lock_cut_frame_count=offline_frames,
             timeline_end_frame=hub_end,
         )
+
+        span = (hub_end - min(starts)) if starts else hub_end
+        coverage_warning = reference_coverage_warning(offline_frames, span, self.timeline_ctx.fps)
+        if coverage_warning:
+            self.logger.warning(coverage_warning)
 
         self._debug_dir = resolve_debug_dir(self.config)
         if self._debug_dir:
