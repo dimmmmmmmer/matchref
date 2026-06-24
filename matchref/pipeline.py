@@ -119,7 +119,10 @@ class MatchRefPipeline:
                 name = _clip_name(item)
                 self._emit(on_message, f"[{index}/{total}] Analyzing: {name}")
 
-                result = analyzer.analyze_one(item)
+                result = analyzer.analyze_one(item, should_cancel=should_cancel)
+                if should_cancel and should_cancel():
+                    self._emit(on_message, "Stopped by user.")
+                    break
                 if result is None:
                     self._emit(on_message, "  Skipped (no media).")
                     continue

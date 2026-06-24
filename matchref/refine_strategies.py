@@ -166,6 +166,7 @@ def refine_multi_strategy(
     initial: ClipEditTransform,
     cost_fn: Callable[[list[float]], float],
     score_fn: Callable[[np.ndarray], float],
+    should_cancel: Callable[[], bool] | None = None,
 ) -> RefineOutcome:
     width, height = int(canvas_size[0]), int(canvas_size[1])
     max_zoom = float(config.get("refine_zoom_max", 4.0))
@@ -214,6 +215,8 @@ def refine_multi_strategy(
 
     early_exit = _refine_early_exit_enabled(config)
     for order in orders:
+        if should_cancel is not None and should_cancel():
+            break
         if not order:
             continue
         edit, ncc = refine_with_strategy_order(start, order, ctx)
