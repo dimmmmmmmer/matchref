@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import numpy as np
 
-from matchref.perspective import CornerPin, corners_to_cornerpin, homography_corners
+from matchref.perspective import (
+    CornerPin,
+    cornerpin_from_warp,
+    corners_to_cornerpin,
+    homography_corners,
+    rescale_homography,
+)
 
 W, H = 1920, 1080
 
@@ -43,4 +49,22 @@ def test_cornerpin_normalizes_with_y_up() -> None:
     assert cp.top_left == (0.0, 1.0)       # pixel (0,0) → normalized (0,1) (Y up)
     assert cp.bottom_left == (0.0, 0.0)    # pixel (0,H) → normalized (0,0)
     assert cp.top_right == (1.0, 1.0)
+    assert cp.bottom_right == (1.0, 0.0)
+
+
+def test_rescale_homography_identity() -> None:
+    out = rescale_homography(np.eye(3), 0.5)
+    assert np.allclose(out, np.eye(3))
+
+
+def test_rescale_homography_scales_translation() -> None:
+    # Translation of 10px solved at half size → 20px at full size.
+    h_reduced = np.array([[1.0, 0.0, 10.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+    full = rescale_homography(h_reduced, 0.5)
+    assert full[0, 2] == 20.0
+
+
+def test_cornerpin_from_warp_identity_is_full_frame() -> None:
+    cp = cornerpin_from_warp(np.eye(3), (W, H))
+    assert cp.top_left == (0.0, 1.0)
     assert cp.bottom_right == (1.0, 0.0)

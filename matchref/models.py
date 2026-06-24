@@ -44,6 +44,7 @@ class TransformSample:
     warp_matrix: Any = None
     refined_edit: Any = None  # ClipEditTransform when Resolve Edit search used
     accept_via: str = ""  # "score" | "agreement" | "consensus" — how it was accepted
+    homography: Any = None  # 3x3 (timeline px) when perspective_match_enabled
 
 
 @dataclass

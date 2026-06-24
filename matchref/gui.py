@@ -196,13 +196,15 @@ class MatchRefWindow(QMainWindow):
         advanced = QGroupBox("Advanced (experimental — validate in Resolve)")
         adv_layout = QGridLayout(advanced)
         self.fusion_cb = QCheckBox("Keyframe animated clips via Fusion")
+        self.perspective_cb = QCheckBox("Perspective match (Fusion CornerPin)")
         self.auto_tc_cb = QCheckBox("Auto-align start timecode (timeline ↔ reference)")
         adv_layout.addWidget(self.fusion_cb, 0, 0, 1, 2)
-        adv_layout.addWidget(self.auto_tc_cb, 1, 0, 1, 2)
-        adv_layout.addWidget(QLabel("Reference start TC"), 2, 0)
+        adv_layout.addWidget(self.perspective_cb, 1, 0, 1, 2)
+        adv_layout.addWidget(self.auto_tc_cb, 2, 0, 1, 2)
+        adv_layout.addWidget(QLabel("Reference start TC"), 3, 0)
         self.ref_tc_edit = QLineEdit()
         self.ref_tc_edit.setPlaceholderText("e.g. 01:00:00:00 (optional, for auto-align)")
-        adv_layout.addWidget(self.ref_tc_edit, 2, 1)
+        adv_layout.addWidget(self.ref_tc_edit, 3, 1)
         layout.addWidget(advanced)
 
         action_row = QHBoxLayout()
@@ -267,6 +269,7 @@ class MatchRefWindow(QMainWindow):
         self._on_selection_mode_changed()
 
         self.fusion_cb.setChecked(bool(self.config.get("apply_via_fusion", False)))
+        self.perspective_cb.setChecked(bool(self.config.get("perspective_match_enabled", False)))
         self.auto_tc_cb.setChecked(bool(self.config.get("auto_align_start_timecode", False)))
         self.ref_tc_edit.setText(str(self.config.get("reference_start_timecode", "")))
 
@@ -300,6 +303,7 @@ class MatchRefWindow(QMainWindow):
             track_index=self.selection_track_spin.value(),
         )
         self.config.set("apply_via_fusion", self.fusion_cb.isChecked())
+        self.config.set("perspective_match_enabled", self.perspective_cb.isChecked())
         self.config.set("auto_align_start_timecode", self.auto_tc_cb.isChecked())
         self.config.set("reference_start_timecode", self.ref_tc_edit.text().strip())
         self.config.save(USER_CONFIG_PATH)
@@ -343,6 +347,7 @@ class MatchRefWindow(QMainWindow):
             self.selection_color_combo,
             self.selection_track_spin,
             self.fusion_cb,
+            self.perspective_cb,
             self.auto_tc_cb,
             self.ref_tc_edit,
         ):

@@ -750,6 +750,14 @@ class TransformAnalyzer:
         sample.ok = True
         if not sample.accept_via:
             sample.accept_via = "score"  # ECC cleared threshold; no refine needed
+        # Perspective (opt-in): solve a homography for this matched pair so apply can
+        # use a Fusion CornerPin. Best-effort; the affine result above is unaffected.
+        if bool(self.config.get("perspective_match_enabled", False)):
+            from matchref.perspective import solve_homography
+
+            sample.homography = solve_homography(
+                online, offline, self.config, timeline_size=canvas
+            )
         transform_vectors.append((scale, pos_x, pos_y, angle))
         result.samples.append(sample)
         log_sample(self.logger, result.clip_name, sample)

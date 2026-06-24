@@ -10,8 +10,11 @@ geometry below is unit-tested.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
+
+from matchref.config import AppConfig
 
 
 @dataclass(frozen=True)
@@ -67,3 +70,68 @@ def corners_to_cornerpin(
         bottom_right=norm(corners[2]),
         bottom_left=norm(corners[3]),
     )
+
+
+def rescale_homography(warp: np.ndarray, scale: float) -> np.ndarray:
+    """Convert a homography solved at a downscaled size to full-size coordinates.
+
+    If the solve ran on frames downscaled by ``scale`` (reduced = scale · full),
+    the full-resolution homography is S⁻¹ · H · S with S = diag(scale, scale, 1).
+    Unlike an affine, a homography's perspective row also needs this conjugation —
+    rescaling only the translation column would be wrong.
+    """
+    matrix = np.asarray(warp, dtype=np.float64)
+    if matrix.shape != (3, 3):
+        raise ValueError("homography must be 3x3")
+    s = float(scale) if scale else 1.0
+    big = np.diag([s, s, 1.0])
+    big_inv = np.diag([1.0 / s, 1.0 / s, 1.0])
+    return big_inv @ matrix @ big
+
+
+def cornerpin_from_warp(warp: np.ndarray, timeline_size: tuple[int, int]) -> CornerPin:
+    """Homography (timeline pixels) → normalized Fusion CornerPin inputs."""
+    width, height = int(timeline_size[0]), int(timeline_size[1])
+    return corners_to_cornerpin(homography_corners(warp, width, height), width, height)
+
+
+def solve_homography(
+    online_bgr: Any,
+    offline_bgr: Any,
+    config: AppConfig,
+    *,
+    timeline_size: tuple[int, int],
+) -> np.ndarray | None:
+    """Best-effort ECC homography (online→offline), returned in timeline pixels.
+
+    Solves on a downscaled pair for a smooth landscape, then rescales the
+    homography back to the timeline raster. Returns None if ECC does not converge.
+    cv2-bound — only the surrounding geometry (rescale/corners) is unit-tested.
+    """
+    import cv2
+
+    from matchref.alignment import _match_size, prepare_gray_uint8
+
+    tw = max(1, int(timeline_size[0]))
+    cap = int(config.get("refine_max_width", 1920))
+    max_w = min(cap, tw) if cap > 0 else tw
+    use_clahe = bool(config.get("match_use_clahe", True))
+    on = prepare_gray_uint8(online_bgr, max_w, use_clahe=use_clahe)
+    off = prepare_gray_uint8(offline_bgr, max_w, use_clahe=use_clahe)
+    on, off = _match_size(on, off)
+
+    scale = on.shape[1] / float(tw)
+    warp = np.eye(3, 3, dtype=np.float32)
+    criteria = (
+        cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT,
+        int(config.get("ecc_iterations", 8000)),
+        float(config.get("ecc_epsilon", 1e-8)),
+    )
+    try:
+        _, warp = cv2.findTransformECC(  # type: ignore[call-overload]
+            off, on, warp, cv2.MOTION_HOMOGRAPHY, criteria, None,
+            int(config.get("ecc_gauss_filt_size", 5)),
+        )
+    except cv2.error:
+        return None
+    return rescale_homography(warp, scale)
