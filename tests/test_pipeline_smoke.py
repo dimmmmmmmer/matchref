@@ -123,3 +123,19 @@ def test_no_clips_raises(monkeypatch) -> None:
         assert "No clips" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("expected RuntimeError for an empty selection")
+
+
+def test_all_skipped_surfaces_reasons(monkeypatch) -> None:
+    class _AllSkipped(_StubAnalyzer):
+        def prepare_batch(self, clips):
+            return [], ["shotA: media offline (file not found on disk)"]
+
+    pipe = _pipeline(AppConfig(), monkeypatch, [_Clip("shotA")])
+    monkeypatch.setattr(pipeline_mod, "TransformAnalyzer", _AllSkipped)
+
+    messages: list[str] = []
+    report = pipe.run_selected(on_message=messages.append)
+
+    assert report.results == []
+    assert any("were skipped" in m for m in messages)
+    assert any("media offline" in m for m in messages)

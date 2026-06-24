@@ -95,6 +95,34 @@ def detect_lock_cut_hub_origin(
     return 0
 
 
+def reference_coverage_warning(
+    offline_frames: int,
+    timeline_span_frames: int,
+    fps: float,
+    *,
+    min_ratio: float = 0.5,
+) -> str | None:
+    """Warn when the offline reference looks too short for the timeline.
+
+    A common user error is picking a single clip or a truncated render instead of
+    the full lock-cut, which throws frame mapping off. Returns a message to surface,
+    or None when the reference plausibly covers the timeline.
+    """
+    if offline_frames <= 0:
+        return "Offline reference has 0 readable frames — check that the file opens."
+    if timeline_span_frames <= 0:
+        return None
+    if offline_frames >= min_ratio * timeline_span_frames:
+        return None
+    fps = fps if fps > 0 else 24.0
+    return (
+        f"Offline reference is much shorter than the timeline: "
+        f"{offline_frames}f (~{offline_frames / fps:.0f}s) vs ~{timeline_span_frames}f "
+        f"(~{timeline_span_frames / fps:.0f}s). Did you pick the full lock-cut render? "
+        f"Frame mapping may be wrong."
+    )
+
+
 def hub_to_lock_cut_frame(
     resolve_hub_frame: int,
     *,

@@ -1,7 +1,29 @@
 """Lock-cut hub origin detection."""
 
 from matchref.config import AppConfig
-from matchref.lock_cut_align import detect_lock_cut_hub_origin, hub_to_lock_cut_frame
+from matchref.lock_cut_align import (
+    detect_lock_cut_hub_origin,
+    hub_to_lock_cut_frame,
+    reference_coverage_warning,
+)
+
+
+def test_coverage_ok_when_reference_covers_timeline() -> None:
+    assert reference_coverage_warning(48_000, 50_000, 24.0) is None
+
+
+def test_coverage_warns_when_reference_too_short() -> None:
+    msg = reference_coverage_warning(1_000, 50_000, 24.0)
+    assert msg is not None and "shorter" in msg
+
+
+def test_coverage_warns_on_zero_frames() -> None:
+    msg = reference_coverage_warning(0, 50_000, 24.0)
+    assert msg is not None and "0 readable frames" in msg
+
+
+def test_coverage_none_when_timeline_span_unknown() -> None:
+    assert reference_coverage_warning(1_000, 0, 24.0) is None
 
 
 def test_full_timeline_origin_zero() -> None:
