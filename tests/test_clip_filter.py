@@ -56,6 +56,7 @@ class _FakeClip:
 def test_skip_disabled_returns_false() -> None:
     cfg = AppConfig()
     cfg.set("skip_reference_on_timeline", False)
+    cfg.set("skip_offline_media", False)  # isolate the reference-skip flag
     skip, _ = should_skip_clip(_FakeClip(path="/a/ref.mov"), cfg, offline_reference="/a/ref.mov")
     assert skip is False
 
@@ -90,10 +91,36 @@ def test_skips_full_length_named_reference() -> None:
     assert "lock cut" in reason.lower()
 
 
-def test_keeps_normal_shot() -> None:
+def test_keeps_normal_shot(tmp_path) -> None:
     cfg = AppConfig()
-    clip = _FakeClip(path="/a/shot01.mov", track=1, duration=80, name="shot01")
+    media = tmp_path / "shot01.mov"
+    media.write_bytes(b"x")  # a real (online) file so it isn't skipped as offline
+    clip = _FakeClip(path=str(media), track=1, duration=80, name="shot01")
     skip, _ = should_skip_clip(
         clip, cfg, offline_reference="/a/ref.mov", offline_frame_count=1000
     )
     assert skip is False
+
+
+def test_skips_offline_media_missing_file() -> None:
+    cfg = AppConfig()
+    clip = _FakeClip(path="/nope/missing.mov", track=1, duration=80, name="shot")
+    skip, reason = should_skip_clip(clip, cfg, offline_reference="/a/ref.mov")
+    assert skip is True
+    assert "offline" in reason
+
+
+def test_skips_offline_media_no_linked_file() -> None:
+    cfg = AppConfig()
+    clip = _FakeClip(path="", track=1, duration=80, name="shot")
+    skip, reason = should_skip_clip(clip, cfg)
+    assert skip is True
+    assert "offline" in reason
+
+
+def test_offline_skip_can_be_disabled(tmp_path) -> None:
+    cfg = AppConfig()
+    cfg.set("skip_offline_media", False)
+    clip = _FakeClip(path="/nope/missing.mov", track=1, duration=80, name="shot")
+    skip, _ = should_skip_clip(clip, cfg, offline_reference="/a/ref.mov")
+    assert skip is False  # offline media no longer triggers a skip

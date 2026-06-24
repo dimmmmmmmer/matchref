@@ -6,6 +6,7 @@
   "prefer_record_timecode_mapping": true,
   "max_clip_duration_frames": 0,
   "skip_reference_on_timeline": true,
+  "skip_offline_media": true,
   "exclude_track_indices": [],
   "skip_clip_name_patterns": ["lock cut", "offline ref", "offline reference"],
   "reference_clip_max_duration_frames": 0,
