@@ -575,8 +575,12 @@ def refine_warp_phase_correlation(
     dx, dy = float(shift[0]), float(shift[1])
     if abs(dx) < 1e-4 and abs(dy) < 1e-4:
         return warp
-    patch = np.array([[1.0, 0.0, dx], [0.0, 1.0, dy]], dtype=np.float32)
-    return patch @ np.vstack([warp[:2, :], [0.0, 0.0, 1.0]])[:2, :]
+    # Compose the residual sub-pixel translation onto the ECC warp in homogeneous
+    # 3x3 space, then drop back to 2x3. Both operands must be 3x3 for the matmul —
+    # slicing to 2x3 before multiplying makes it a (2,3)@(2,3) shape error.
+    patch = np.array([[1.0, 0.0, dx], [0.0, 1.0, dy], [0.0, 0.0, 1.0]], dtype=np.float32)
+    warp_h = np.vstack([warp[:2, :], [0.0, 0.0, 1.0]]).astype(np.float32)
+    return (patch @ warp_h)[:2, :]
 
 
 def initial_edit_from_warp(

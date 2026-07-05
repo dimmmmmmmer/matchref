@@ -1,3 +1,6 @@
-numpy>=1.24.0
-opencv-python>=4.8.0
-PySide6>=6.5.0
+# Upper bounds cap the next unvalidated major so a fresh double-click install
+# can't silently pull a breaking release (4.x and 5.x of OpenCV, numpy 1.x/2.x
+# are what MatchRef is tested against).
+numpy>=1.24.0,<3
+opencv-python>=4.8.0,<6
+PySide6>=6.5.0,<7

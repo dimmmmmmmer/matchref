@@ -1,3 +1,9 @@
+[project]
+name = "matchref"
+version = "0.1.0"
+description = "Offline reference transform match for DaVinci Resolve"
+requires-python = ">=3.10"   # uses zip(strict=), PEP 604 unions at runtime
+
 [tool.ruff]
 target-version = "py310"
 line-length = 100

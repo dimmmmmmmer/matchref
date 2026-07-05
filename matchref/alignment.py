@@ -129,7 +129,7 @@ def prepare_gray_uint8(
     return gray
 
 
-def decompose_affine(warp_matrix: np.ndarray, image_shape: tuple[int, int]) -> tuple[float, float, float, float]:
+def decompose_affine(warp_matrix: np.ndarray, image_shape: tuple[int, ...]) -> tuple[float, float, float, float]:
     """Scale, normalized translation (tx/w, ty/h) and rotation from a warp."""
     from matchref.transform_convert import decompose_warp_matrix
 
@@ -142,7 +142,7 @@ def _fill_result(
     result: AlignmentResult,
     warp: np.ndarray,
     score: float,
-    shape: tuple[int, int],
+    shape: tuple[int, ...],
     method: str,
     config: AppConfig | None = None,
 ) -> AlignmentResult:
@@ -241,25 +241,20 @@ def _run_ecc(
     mask: np.ndarray | None = None,
 ) -> tuple[float, np.ndarray]:
     warp = np.eye(2, 3, dtype=np.float32) if init is None else init.astype(np.float32).copy()
-    if mask is not None:
-        score, warp_out = cv2.findTransformECC(
-            template,
-            input_img,
-            warp,
-            motion,
-            criteria,
-            mask,
-            gauss,
-        )
-    else:
-        score, warp_out = cv2.findTransformECC(  # type: ignore[call-overload]
-            template,
-            input_img,
-            warp,
-            motion,
-            criteria,
-            gauss,
-        )
+    # Signature is findTransformECC(template, input, warp, motion, criteria, inputMask,
+    # gaussFiltSize). gaussFiltSize is the 7th argument — passing it 6th (as a
+    # no-mask shortcut) puts the int where inputMask is expected, so OpenCV raises
+    # and the caller silently falls back to feature matching. Always pass the mask
+    # slot explicitly (None is accepted) so gauss lands in its real position.
+    score, warp_out = cv2.findTransformECC(
+        template,
+        input_img,
+        warp,
+        motion,
+        criteria,
+        mask,  # type: ignore[arg-type]  # cv2 stub omits None, but the runtime accepts it
+        gauss,
+    )
     return float(score), warp_out
 
 
@@ -459,7 +454,11 @@ def _pyramid_ecc(
             feat = _align_features(off_u8, on_u8, config, ecc_mask)
             if feat is not None and feat.warp_matrix is not None:
                 feat_init = feat.warp_matrix
-        ecc = _try_ecc(off_u8, on_u8, config, warp or feat_init, ecc_mask)
+        # `warp or feat_init` would evaluate the truthiness of a numpy array once
+        # warp is set on the 2nd+ pyramid level — that raises ValueError. Pick the
+        # carried-over warp explicitly, falling back to the feature init.
+        init = warp if warp is not None else feat_init
+        ecc = _try_ecc(off_u8, on_u8, config, init, ecc_mask)
         if ecc is not None:
             warp = ecc.warp_matrix
             best = ecc

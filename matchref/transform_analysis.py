@@ -1054,7 +1054,15 @@ class TransformAnalyzer:
             return best
 
         for delta in range(1, radius + 1):
-            for src_off, off_off in ((delta, delta), (-delta, -delta), (delta, 0), (0, delta)):
+            offsets = (
+                (delta, delta),
+                (-delta, -delta),
+                (delta, 0),
+                (0, delta),
+                (-delta, 0),
+                (0, -delta),
+            )
+            for src_off, off_off in offsets:
                 alt_src = self.frames.clamp_source_frame(media_path, source_frame + src_off)
                 alt_on = self.frames.get_online_frame(media_path, alt_src)
                 alt_off = self.frames.get_offline_frame_at_index(mapping.offline_frame + off_off)
