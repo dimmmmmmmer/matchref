@@ -62,17 +62,9 @@ def content_crop_for_shape(
     return ContentCrop(x0=x0, y0=y0, x1=x1, y1=y1)
 
 
-def crop_frame(frame: np.ndarray, crop: ContentCrop) -> np.ndarray:
-    return frame[crop.y0 : crop.y1, crop.x0 : crop.x1].copy()
-
-
 def ecc_match_mask(shape: tuple[int, ...], crop: ContentCrop) -> np.ndarray:
     """255 = use pixel in ECC template (offline), 0 = ignore overlays at edges."""
     h, w = shape[:2]
     mask = np.zeros((h, w), dtype=np.uint8)
     mask[crop.y0 : crop.y1, crop.x0 : crop.x1] = 255
     return mask
-
-
-def feature_match_mask(shape: tuple[int, ...], crop: ContentCrop) -> np.ndarray:
-    return ecc_match_mask(shape, crop)

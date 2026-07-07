@@ -8,7 +8,7 @@ from typing import Any
 
 from matchref.config import AppConfig
 from matchref.edit_match_mode import compose_result_with_baseline
-from matchref.models import AnalysisReport, ClipAnalysisResult, SamplePoint, TransformSample
+from matchref.models import ClipAnalysisResult, SamplePoint, TransformSample
 from matchref.timeline_context import TimelineContext
 from matchref.transform_convert import baseline_from_result, resolve_transform
 
@@ -48,22 +48,6 @@ class EditTransformApplier:
             project = pm().GetCurrentProject()
             self._timeline = project.GetCurrentTimeline()
         return self._timeline
-
-    def apply_report(self, report: AnalysisReport) -> list[str]:
-        if self.config.get("dry_run", False):
-            self.logger.info("Dry-run: Edit Inspector transforms not written.")
-            return ["dry-run"]
-
-        messages: list[str] = []
-        for result in report.ready_clips:
-            try:
-                self.apply_clip(result)
-                messages.append(f"Applied (Edit): {result.clip_name}")
-            except Exception as exc:  # noqa: BLE001
-                msg = f"Failed {result.clip_name}: {exc}"
-                self.logger.error(msg)
-                messages.append(msg)
-        return messages
 
     def apply_clip(self, result: ClipAnalysisResult) -> None:
         item = result.timeline_item

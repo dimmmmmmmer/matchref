@@ -156,11 +156,6 @@ class _Reference:
         return 1.0 - self.gradient_ncc(rendered)
 
 
-def _ncc_score(rendered: np.ndarray, reference: np.ndarray, config: AppConfig) -> float:
-    """Back-compat: report match quality (default blends intensity + gradient)."""
-    return _Reference(reference, config).score(rendered)
-
-
 def _render_with_edit(
     online_raw: np.ndarray,
     edit: ClipEditTransform,

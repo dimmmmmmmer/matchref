@@ -95,14 +95,6 @@ def _match_size(online: np.ndarray, offline: np.ndarray) -> tuple[np.ndarray, np
     return online, offline
 
 
-def prepare_gray_float(image: np.ndarray, max_width: int) -> np.ndarray:
-    gray = _even_crop(_to_gray(image, max_width))
-    gray = gray.astype(np.float32)
-    gray = cv2.GaussianBlur(gray, (5, 5), 0)
-    cv2.normalize(gray, gray, 0.0, 1.0, cv2.NORM_MINMAX)
-    return gray
-
-
 def prepare_gray_uint8(
     image: np.ndarray,
     max_width: int,
@@ -467,7 +459,7 @@ def _pyramid_ecc(
     if best is not None and warp is not None and bool(
         config.get("refine_subpixel_translation", True)
     ):
-        on_full, off_full, mask_full, _ = _prepare_match_pair(
+        on_full, off_full, _mask_full, _ = _prepare_match_pair(
             online_frame,
             offline_frame,
             timeline_width,

@@ -11,7 +11,7 @@ import cv2
 import numpy as np
 
 from matchref.config import AppConfig
-from matchref.conform_index import OfflineFrameMapping, OfflineFrameResolver
+from matchref.conform_index import OfflineFrameResolver
 from matchref.frame_read import SeekMode, read_frame_at_index
 from matchref.media_probe import probe_video
 from matchref.models import SamplePoint
@@ -112,17 +112,6 @@ class FrameProvider:
         if not ok or frame is None:
             return None, reported
         return frame, reported
-
-    def get_offline_frame(self, timeline_frame: int) -> np.ndarray | None:
-        """Legacy: timeline-frame lookup with config offset only."""
-        offset = int(self.config.get("offline_timeline_offset_frames", 0))
-        return self.get_offline_frame_at_index(int(timeline_frame) + offset)
-
-    def get_offline_frame_mapped(
-        self,
-        mapping: OfflineFrameMapping,
-    ) -> np.ndarray | None:
-        return self.get_offline_frame_at_index(mapping.offline_frame)
 
     def get_media_frame_count(self, media_path: str) -> int:
         cap = self._open_media(media_path)

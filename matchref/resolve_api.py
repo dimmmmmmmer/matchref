@@ -7,8 +7,6 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
-from matchref.config import AppConfig
-
 
 def connect_resolve() -> Any:
     """Connect to Resolve; supports in-app and external launcher."""
@@ -231,14 +229,6 @@ def _items_with_clip_color(items: list[Any], color: str) -> list[Any]:
         if clip_color and _normalize_color_name(clip_color) == target:
             colored.append(item)
     return colored
-
-
-def get_target_clips(timeline: Any, config: AppConfig) -> list[Any]:
-    """See matchref.selection.get_target_clips_with_source for modes."""
-    from matchref.selection import get_target_clips_with_source
-
-    clips, _source = get_target_clips_with_source(timeline, config)
-    return clips
 
 
 def timeline_item_info(item: Any) -> dict[str, Any]:
