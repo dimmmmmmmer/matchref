@@ -1,0 +1,7 @@
+---
+# Exclude the test suite from Codacy static analysis. Test code deliberately uses
+# `assert` (the pytest idiom) and other constructs that tools like Bandit flag as
+# issues (B101) even though they are correct here — analysing tests only produces
+# false positives. Correctness of the tests is enforced by pytest in CI.
+exclude_paths:
+  - "tests/**"
