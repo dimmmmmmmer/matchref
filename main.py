@@ -7,6 +7,17 @@ import argparse
 import sys
 from pathlib import Path
 
+# Fail loudly on an unsupported interpreter (Resolve's bundled Python or a stock
+# macOS python3 can be 3.9). Without this the tool dies mid-analysis with an
+# opaque `zip() takes no keyword arguments`, which reads like a MatchRef bug.
+if sys.version_info < (3, 10):  # noqa: UP036 — intentional runtime guard; may run on 3.9
+    _v = ".".join(str(p) for p in sys.version_info[:3])
+    raise SystemExit(
+        f"MatchRef requires Python 3.10 or newer, but is running under {_v}.\n"
+        "Re-run the installer with a newer Python "
+        "(e.g. PYTHON=python3.12 ./setup.sh), or install Python 3.10+."
+    )
+
 _ROOT = Path(__file__).resolve().parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))

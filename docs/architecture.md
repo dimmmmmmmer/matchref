@@ -44,7 +44,6 @@ matchref/
 
   debug_frames.py       — comparison frames written to the debug folder
   logging_report.py     — logging and the final report
-  extensions.py         — stubs (Perspective / Lens / Dynamic Sampling)
 ```
 
 ## Offline frame mapping

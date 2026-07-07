@@ -54,12 +54,6 @@ class AppConfig:
     def set(self, key: str, value: Any) -> None:
         self._data[key] = value
 
-    def as_dict(self) -> dict[str, Any]:
-        return deepcopy(self._data)
-
-    def update_from_dict(self, values: dict[str, Any]) -> None:
-        self._data = _deep_merge(self._data, values)
-
     @staticmethod
     def _load_json(path: Path) -> dict[str, Any]:
         with path.open(encoding="utf-8") as handle:

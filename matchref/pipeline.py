@@ -22,8 +22,6 @@ class MatchRefPipeline:
         self.logger = logger or logging.getLogger("matchref")
         self.resolve: Any | None = None
         self.timeline: Any | None = None
-        self.last_report: AnalysisReport | None = None
-        self.last_apply_messages: list[str] = []
         self.timeline_ctx: TimelineContext | None = None
 
     def connect(self) -> None:
@@ -95,7 +93,6 @@ class MatchRefPipeline:
             )
 
         report = AnalysisReport()
-        self.last_apply_messages = []
 
         try:
             filtered, skipped = analyzer.prepare_batch(clips)
@@ -137,20 +134,15 @@ class MatchRefPipeline:
                     self._emit(on_message, "  Applying transform…")
                     try:
                         applier.apply_clip(result)
-                        msg = f"  Applied: {name}"
-                        self.last_apply_messages.append(f"Applied (Edit): {name}")
-                        self._emit(on_message, msg)
+                        self._emit(on_message, f"  Applied: {name}")
                     except Exception as exc:  # noqa: BLE001
-                        err = f"  Apply failed: {exc}"
-                        self.last_apply_messages.append(f"Failed {name}: {exc}")
-                        self._emit(on_message, err)
+                        self._emit(on_message, f"  Apply failed: {exc}")
                 elif result.problem:
                     self._emit(on_message, "  Not applied (problem clip).")
 
         finally:
             analyzer.close()
 
-        self.last_report = report
         ready = len(report.ready_clips)
         problems = len(report.problem_clips)
         self._emit(
@@ -184,23 +176,3 @@ class MatchRefPipeline:
     def analyze_selected(self) -> AnalysisReport:
         """Headless / legacy: run without UI callbacks."""
         return self.run_selected()
-
-    def apply_transforms(self, report: AnalysisReport | None = None) -> list[str]:
-        if self.resolve is None:
-            self.connect()
-        assert self.resolve is not None
-
-        target_report = report or self.last_report
-        if target_report is None:
-            raise RuntimeError("Nothing to apply. Run analysis first.")
-
-        if self.timeline_ctx is None:
-            self.connect()
-        assert self.timeline_ctx is not None
-        applier = EditTransformApplier(
-            self.resolve,
-            self.config,
-            self.timeline_ctx,
-            self.logger,
-        )
-        return applier.apply_report(target_report)

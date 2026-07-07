@@ -24,6 +24,16 @@ if errorlevel 1 (
   goto :fail
 )
 
+REM MatchRef needs Python 3.10+ ^(zip^(strict=^), PEP 604 unions^). A too-old
+REM Python produces a venv that fails at runtime, so stop here with a clear note.
+python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)"
+if errorlevel 1 (
+  echo Python 3.10 or newer is required, but an older version was found.
+  for /f "delims=" %%v in ('python -c "import sys; print(sys.version.split()[0])"') do echo Found Python %%v
+  echo Install Python 3.10+ from https://www.python.org/downloads/ and re-run.
+  goto :fail
+)
+
 REM --- 2. Virtual environment + dependencies -------------------------------
 echo - Setting up the Python environment ^(this can take a minute^)...
 if not exist ".venv" (

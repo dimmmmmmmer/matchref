@@ -41,8 +41,16 @@ def _find_project_root() -> Path | None:
 
 
 def _venv_python(project: Path) -> Path | None:
-    for name in ("python", "python3"):
-        candidate = project / ".venv" / "bin" / name
+    # POSIX venvs put the interpreter in .venv/bin; Windows venvs use .venv/Scripts
+    # with a .exe suffix. Check both so the Windows installer's venv is actually
+    # used instead of silently falling back to Resolve's bare Python (no cv2/numpy).
+    candidates = (
+        project / ".venv" / "bin" / "python",
+        project / ".venv" / "bin" / "python3",
+        project / ".venv" / "Scripts" / "python.exe",
+        project / ".venv" / "Scripts" / "python3.exe",
+    )
+    for candidate in candidates:
         if candidate.is_file():
             return candidate
     return None

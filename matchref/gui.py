@@ -79,8 +79,11 @@ class PipelineWorker(QObject):
 
     def run(self) -> None:
         try:
-            if self.pipeline.resolve is None:
-                self.pipeline.connect()
+            # Reconnect on every run so the current Resolve timeline is re-read.
+            # Reusing a cached connection would keep processing the timeline that
+            # was open at first launch even after the user switched timelines
+            # (different clips, fps or resolution) — silently wrong results.
+            self.pipeline.connect()
             self.pipeline.run_selected(
                 on_message=self.log_line.emit,
                 should_cancel=lambda: self._cancelled,

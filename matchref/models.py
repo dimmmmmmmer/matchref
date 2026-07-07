@@ -72,11 +72,6 @@ class ClipAnalysisResult:
     def is_valid(self) -> bool:
         return bool(self.samples) and any(s.ok for s in self.samples) and not self.problem
 
-    def min_ecc_score(self) -> float:
-        if not self.samples:
-            return 0.0
-        return min(s.ecc_score for s in self.samples)
-
 
 @dataclass
 class AnalysisReport:

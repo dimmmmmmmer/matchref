@@ -54,7 +54,7 @@ from matchref.match_quality import (
     scale_spread,
     score_from_refine_ncc,
 )
-from matchref.models import AnalysisReport, ClipAnalysisResult, SamplePoint, TransformSample
+from matchref.models import ClipAnalysisResult, SamplePoint, TransformSample
 from matchref.precision_align import (
     initial_edit_from_warp,
     is_maximum_precision,
@@ -201,11 +201,7 @@ class TransformAnalyzer:
             config=self.config,
             logger=self.logger,
         )
-        self.frames.offline_resolver.configure_lock_cut(
-            lock_cut_hub_origin=origin,
-            lock_cut_frame_count=offline_frames,
-            timeline_end_frame=hub_end,
-        )
+        self.frames.offline_resolver.configure_lock_cut(lock_cut_hub_origin=origin)
 
         span = (hub_end - min(starts)) if starts else hub_end
         coverage_warning = reference_coverage_warning(offline_frames, span, self.timeline_ctx.fps)
@@ -219,34 +215,6 @@ class TransformAnalyzer:
         self._batch_ready = True
         self.logger.info("Batch: %d clips (%d skipped)", len(clips), len(skipped))
         return clips, skipped
-
-    def analyze_clips(
-        self,
-        timeline_items: list[Any],
-        *,
-        on_clip_status: Callable[[int, int, str, str], None] | None = None,
-        should_cancel: Callable[[], bool] | None = None,
-    ) -> AnalysisReport:
-        clips, skipped = self.prepare_batch(timeline_items)
-        report = AnalysisReport()
-        report.skipped.extend(skipped)
-        total = len(clips)
-
-        for index, item in enumerate(clips, start=1):
-            if should_cancel and should_cancel():
-                self.logger.info("Cancelled after %d/%d clips", index - 1, total)
-                break
-            name = _clip_name(item)
-            if on_clip_status:
-                on_clip_status(index, total, "analyze", name)
-            self.logger.info("--- Clip %d/%d: %s ---", index, total, name)
-            info = self._analyze_single(item)
-            if info is not None:
-                report.results.append(info)
-            if on_clip_status:
-                on_clip_status(index, total, "done", name)
-
-        return report
 
     def analyze_one(
         self,
@@ -1054,7 +1022,15 @@ class TransformAnalyzer:
             return best
 
         for delta in range(1, radius + 1):
-            for src_off, off_off in ((delta, delta), (-delta, -delta), (delta, 0), (0, delta)):
+            offsets = (
+                (delta, delta),
+                (-delta, -delta),
+                (delta, 0),
+                (0, delta),
+                (-delta, 0),
+                (0, -delta),
+            )
+            for src_off, off_off in offsets:
                 alt_src = self.frames.clamp_source_frame(media_path, source_frame + src_off)
                 alt_on = self.frames.get_online_frame(media_path, alt_src)
                 alt_off = self.frames.get_offline_frame_at_index(mapping.offline_frame + off_off)

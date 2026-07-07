@@ -326,16 +326,8 @@ class OfflineFrameResolver:
         self.conform = conform
         self.lock_cut_hub_origin = 0
 
-    def configure_lock_cut(
-        self,
-        *,
-        lock_cut_hub_origin: int,
-        lock_cut_frame_count: int = 0,
-        timeline_end_frame: int = 0,
-    ) -> None:
+    def configure_lock_cut(self, *, lock_cut_hub_origin: int) -> None:
         self.lock_cut_hub_origin = max(0, int(lock_cut_hub_origin))
-        self._lock_cut_frames = lock_cut_frame_count
-        self._timeline_end = timeline_end_frame
 
     def _offline_from_resolve(self, resolve_frame: int) -> int:
         ref_origin = 0
