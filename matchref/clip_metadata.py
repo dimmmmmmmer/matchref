@@ -29,7 +29,9 @@ def _property_lookup(container: Any, keys: tuple[str, ...]) -> str:
         return ""
     for key in keys:
         try:
-            value = container.GetClipProperty(key) if hasattr(container, "GetClipProperty") else None
+            value = (
+                container.GetClipProperty(key) if hasattr(container, "GetClipProperty") else None
+            )
             if value:
                 return str(value).strip()
         except Exception:
@@ -45,7 +47,9 @@ def _property_lookup(container: Any, keys: tuple[str, ...]) -> str:
     return ""
 
 
-def reel_name_from_item(timeline_item: Any, media_pool_item: Any, clip_name: str, media_path: str) -> str:
+def reel_name_from_item(
+    timeline_item: Any, media_pool_item: Any, clip_name: str, media_path: str
+) -> str:
     for source in (media_pool_item, timeline_item):
         value = _property_lookup(
             source,

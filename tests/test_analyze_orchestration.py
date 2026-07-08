@@ -55,7 +55,9 @@ def test_stop_after_short_circuits_remaining_samples() -> None:
     finalized: list[object] = []
     analyzer._begin_clip = lambda item: ctx  # type: ignore[method-assign]
     analyzer._process_sample = lambda c, p, f, sc=None: seen.append(p) or p  # type: ignore[method-assign]
-    analyzer._should_stop_after = lambda c, s: s == "a"  # stop right after first  # type: ignore[method-assign]
+    analyzer._should_stop_after = lambda c, s: (
+        s == "a"
+    )  # stop right after first  # type: ignore[method-assign]
     analyzer._finalize_clip = lambda c: finalized.append(c)  # type: ignore[method-assign]
 
     analyzer._analyze_single(object())
@@ -75,6 +77,6 @@ def test_cancel_mid_clip_returns_none_without_finalize() -> None:
 
     result = analyzer._analyze_single(object(), should_cancel=lambda: True)
 
-    assert result is None       # cancelled clip is discarded
-    assert seen == []           # no sample processed (cancel checked first)
-    assert finalized == []      # finalize skipped on cancel
+    assert result is None  # cancelled clip is discarded
+    assert seen == []  # no sample processed (cancel checked first)
+    assert finalized == []  # finalize skipped on cancel

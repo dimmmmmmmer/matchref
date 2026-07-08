@@ -96,9 +96,7 @@ def test_keeps_normal_shot(tmp_path) -> None:
     media = tmp_path / "shot01.mov"
     media.write_bytes(b"x")  # a real (online) file so it isn't skipped as offline
     clip = _FakeClip(path=str(media), track=1, duration=80, name="shot01")
-    skip, _ = should_skip_clip(
-        clip, cfg, offline_reference="/a/ref.mov", offline_frame_count=1000
-    )
+    skip, _ = should_skip_clip(clip, cfg, offline_reference="/a/ref.mov", offline_frame_count=1000)
     assert skip is False
 
 

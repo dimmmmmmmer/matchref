@@ -1,4 +1,7 @@
 -r requirements.txt
 pytest>=8.0
-ruff>=0.6
-mypy>=1.8
+# Ruff is pinned exactly and must match the rev in .pre-commit-config.yaml:
+# formatter output differs between versions, so a skew reintroduces format
+# drift between local runs, pre-commit, and CI's `ruff format --check`.
+ruff==0.15.20
+mypy>=2.1,<3

@@ -8,7 +8,6 @@ silently fell back to ORB feature matching while still reporting an "ecc_score".
 These tests assert the ECC path actually runs and reports an ECC-derived match.
 """
 
-
 import cv2
 import numpy as np
 

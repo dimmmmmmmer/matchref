@@ -118,7 +118,9 @@ class ConformIndex:
         ):
             self.logger.info(line)
         if self._timeline_offset_frames:
-            self.logger.info("  Hub → lock cut: extra offset %d frames", self._timeline_offset_frames)
+            self.logger.info(
+                "  Hub → lock cut: extra offset %d frames", self._timeline_offset_frames
+            )
 
         self._loaded = bool(self.events)
         return self._loaded
@@ -284,13 +286,20 @@ class ConformIndex:
         clip_name: str,
         media_basename: str,
     ) -> EdlEvent | None:
-        keys = [_normalize_key(reel_name), _normalize_key(clip_name), _normalize_key(media_basename)]
+        keys = [
+            _normalize_key(reel_name),
+            _normalize_key(clip_name),
+            _normalize_key(media_basename),
+        ]
         keys = [k for k in keys if k]
 
         for event in self.events:
             if event.reel == "AX" or event.reel.upper() == "AX":
                 continue
-            if _normalize_key(event.reel) not in keys and _normalize_key(event.clip_name) not in keys:
+            if (
+                _normalize_key(event.reel) not in keys
+                and _normalize_key(event.clip_name) not in keys
+            ):
                 continue
             if event.src_in <= source_frame < event.src_out:
                 return event
@@ -384,7 +393,6 @@ class OfflineFrameResolver:
             source=OfflineMappingSource.TIMELINE,
             reel=reel_name,
             detail=(
-                f"resolve hub {resolve_t} → lock-cut {offline} "
-                f"(origin hub {origin}, no conform)"
+                f"resolve hub {resolve_t} → lock-cut {offline} (origin hub {origin}, no conform)"
             ),
         )

@@ -5,7 +5,6 @@ identically-framed but heavily graded offline. Matching must score on shared
 structure (edges), not absolute luminance.
 """
 
-
 import cv2
 import numpy as np
 

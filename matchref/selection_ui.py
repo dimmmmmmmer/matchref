@@ -20,8 +20,22 @@ SELECTION_MODES: list[tuple[str, str]] = [
 
 # DaVinci Resolve's 16 clip/flag colors, in UI order.
 RESOLVE_COLORS: list[str] = [
-    "Blue", "Cyan", "Green", "Yellow", "Red", "Pink", "Purple", "Fuchsia",
-    "Rose", "Lavender", "Sky", "Mint", "Lemon", "Sand", "Cocoa", "Cream",
+    "Blue",
+    "Cyan",
+    "Green",
+    "Yellow",
+    "Red",
+    "Pink",
+    "Purple",
+    "Fuchsia",
+    "Rose",
+    "Lavender",
+    "Sky",
+    "Mint",
+    "Lemon",
+    "Sand",
+    "Cocoa",
+    "Cream",
 ]
 
 _COLOR_MODES = {"auto", "clip_color", "colored", "flagged"}
@@ -39,11 +53,12 @@ def mode_uses_track(mode: str) -> bool:
 def selection_from_config(config: AppConfig) -> tuple[str, str, int]:
     """Read (mode, color, track_index) from config for populating the UI."""
     mode = str(config.get("clip_selection_mode", "auto")).lower()
-    color = str(
-        config.get("selection_clip_color")
-        or config.get("selection_flag_color")
+    color = (
+        str(
+            config.get("selection_clip_color") or config.get("selection_flag_color") or "Purple"
+        ).strip()
         or "Purple"
-    ).strip() or "Purple"
+    )
     track = int(config.get("video_track_index", 1) or 1)
     return mode, color, track
 

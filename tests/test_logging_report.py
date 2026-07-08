@@ -8,8 +8,11 @@ from matchref.models import AnalysisReport, ClipAnalysisResult, SamplePoint, Tra
 
 def _clip(name: str, *, ok: bool, problem: bool, warning: str = "") -> ClipAnalysisResult:
     r = ClipAnalysisResult(
-        clip_name=name, timeline_item_id=name, track_type="video",
-        track_index=1, duration_frames=100,
+        clip_name=name,
+        timeline_item_id=name,
+        track_type="video",
+        track_index=1,
+        duration_frames=100,
     )
     s = TransformSample(sample_point=SamplePoint.MID, clip_local_frame=50, timeline_frame=50)
     s.ok = ok

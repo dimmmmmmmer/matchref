@@ -12,10 +12,10 @@
 
 | Ключ | Дефолт | Назначение |
 |------|--------|-----------|
-| `clip_selection_mode` | `"auto"` | Что обрабатывать: `auto` (флагнутые, иначе все), `flagged`, `all_filtered`. |
+| `clip_selection_mode` | `"auto"` | Что обрабатывать: `auto` (выделение в таймлайне → цвет клипа → флаги → все), `clip_color`, `flagged`, `selected`, `track`, `all_filtered`, `playhead`. |
 | `selection_clip_color` | `"Purple"` | Цвет клипа, помечающий шот к обработке. |
 | `selection_flag_color` | `"Purple"` | Цвет флага-маркера (альтернатива цвету клипа). |
-| `auto_all_clips_fallback` | `true` | В режиме `auto`: если ничего не флагнуто — взять все клипы. |
+| `auto_all_clips_fallback` | `true` | В режиме `auto`: если ничего не найдено по выделению/цвету/флагам — взять все клипы. |
 | `skip_clip_name_patterns` | `["lock cut", "offline ref", "offline reference"]` | Подстроки в имени клипа, которые исключают его (сам референс на таймлайне). |
 | `skip_reference_on_timeline` | `true` | Пропускать клип, совпадающий с offline-референсом. |
 | `skip_offline_media` | `true` | Пропускать клипы с офлайн-медиа (нет привязанного файла / файла нет на диске) — с понятной причиной в отчёте, а не падением на каждом сэмпле. |

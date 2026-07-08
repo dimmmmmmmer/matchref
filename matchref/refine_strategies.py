@@ -19,6 +19,7 @@ def _refine_early_exit_enabled(config: AppConfig) -> bool:
 def _refine_ncc_passes(ncc: float, config: AppConfig) -> bool:
     return float(ncc) >= float(config.get("auto_reframe_ncc_threshold", 0.95))
 
+
 Stage = str  # zoom | position | rotation
 
 DEFAULT_STRATEGY_ORDERS: list[list[Stage]] = [
@@ -98,19 +99,13 @@ def _coordinate_descent(
 def _run_stage(state: list[float], stage: Stage, ctx: _RefineContext) -> list[float]:
     if stage == "zoom":
         for step in ctx.zoom_steps:
-            state = _coordinate_descent(
-                state, ctx.cost_fn, deltas=[step, 0.0, 0.0, 0.0]
-            )
+            state = _coordinate_descent(state, ctx.cost_fn, deltas=[step, 0.0, 0.0, 0.0])
     elif stage == "position":
         for step in ctx.pan_steps:
-            state = _coordinate_descent(
-                state, ctx.cost_fn, deltas=[0.0, step, step, 0.0]
-            )
+            state = _coordinate_descent(state, ctx.cost_fn, deltas=[0.0, step, step, 0.0])
     elif stage == "rotation" and ctx.use_rotation:
         for step in ctx.rot_steps:
-            state = _coordinate_descent(
-                state, ctx.cost_fn, deltas=[0.0, 0.0, 0.0, step]
-            )
+            state = _coordinate_descent(state, ctx.cost_fn, deltas=[0.0, 0.0, 0.0, step])
     return state
 
 
@@ -151,9 +146,7 @@ def refine_with_strategy_order(
             break
         prev_cost = cost
     edit = _state_to_edit(state, ctx)
-    rendered = apply_clip_edit_to_frame(
-        ctx.online_raw, edit, ctx.canvas_size, ctx.config
-    )
+    rendered = apply_clip_edit_to_frame(ctx.online_raw, edit, ctx.canvas_size, ctx.config)
     return edit, ctx.score_fn(rendered)
 
 

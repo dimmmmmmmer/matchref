@@ -297,12 +297,8 @@ def assess_clip_match_quality(
 
     if len(ok_samples) >= 2:
         pos_threshold = float(config.get("transform_variance_threshold", 0.02))
-        pos_vectors = [
-            (s.position_x, s.position_y, s.rotation_deg, 0.0) for s in ok_samples
-        ]
+        pos_vectors = [(s.position_x, s.position_y, s.rotation_deg, 0.0) for s in ok_samples]
         if not transforms_are_stable(pos_vectors, pos_threshold):
-            reasons.append(
-                f"pan/tilt/rot unstable across samples (threshold {pos_threshold})"
-            )
+            reasons.append(f"pan/tilt/rot unstable across samples (threshold {pos_threshold})")
 
     return len(reasons) == 0, reasons

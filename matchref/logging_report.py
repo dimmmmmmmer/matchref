@@ -65,7 +65,9 @@ def format_report(report: AnalysisReport) -> str:
     for result in report.results:
         status = "READY" if result.is_valid else "PROBLEM"
         lines.append("")
-        lines.append(f"[{status}] {result.clip_name} (track {result.track_index}, {result.duration_frames}f)")
+        lines.append(
+            f"[{status}] {result.clip_name} (track {result.track_index}, {result.duration_frames}f)"
+        )
         if result.warnings:
             for warning in result.warnings:
                 lines.append(f"  ! {warning}")

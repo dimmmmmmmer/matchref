@@ -30,7 +30,9 @@ def main() -> int:
     parser.add_argument("--config", help="Path to JSON config file")
     parser.add_argument("--analyze", action="store_true", help="Run analysis headless")
     parser.add_argument("--apply", action="store_true", help="Apply last analysis headless")
-    parser.add_argument("--no-gui", action="store_true", help="Disable GUI (requires --analyze or --apply)")
+    parser.add_argument(
+        "--no-gui", action="store_true", help="Disable GUI (requires --analyze or --apply)"
+    )
     args = parser.parse_args()
 
     from matchref.config import AppConfig

@@ -36,9 +36,7 @@ class FusionTransform:
     angle: float
 
 
-def fusion_transform_values(
-    resolved: Any, timeline_size: tuple[int, int]
-) -> FusionTransform:
+def fusion_transform_values(resolved: Any, timeline_size: tuple[int, int]) -> FusionTransform:
     """Convert a resolved Edit transform (px Pan/Tilt, Zoom) to Fusion inputs.
 
     Fusion Center is normalized 0..1 with 0.5 = frame centre and Y pointing up;
@@ -69,9 +67,7 @@ def build_keyframe_spec(
     """
     baseline = baseline_from_result(result)
     compose_bl = baseline if compose_result_with_baseline(config) else None
-    ok = sorted(
-        (s for s in result.samples if s.ok), key=lambda s: s.clip_local_frame
-    )
+    ok = sorted((s for s in result.samples if s.ok), key=lambda s: s.clip_local_frame)
     spec: list[tuple[int, FusionTransform]] = []
     for sample in ok:
         resolved = resolve_transform(sample, config, timeline_size, baseline=compose_bl)
@@ -128,9 +124,7 @@ class FusionTransformApplier:
             self._key(node, "Center", frame, (xf.center_x, xf.center_y))
             self._key(node, "Size", frame, xf.size)
             self._key(node, "Angle", frame, xf.angle)
-        self.logger.info(
-            "Fusion Transform keyframed: %s — %d keys", result.clip_name, len(spec)
-        )
+        self.logger.info("Fusion Transform keyframed: %s — %d keys", result.clip_name, len(spec))
 
     # --- live-Resolve plumbing (PROTOTYPE) ----------------------------------
 

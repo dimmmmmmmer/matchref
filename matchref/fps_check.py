@@ -68,9 +68,8 @@ def validate_against_timeline(
         mismatches.append(f"Reference file: {format_fps(ref_fps)} ≠ timeline {format_fps(hub)}")
 
     if mismatches:
-        detail = (
-            "Frame rate mismatch with the open Resolve timeline (hub).\n"
-            + "\n".join(f"  • {m}" for m in mismatches)
+        detail = "Frame rate mismatch with the open Resolve timeline (hub).\n" + "\n".join(
+            f"  • {m}" for m in mismatches
         )
         if strict:
             raise FpsMismatchError(detail)
