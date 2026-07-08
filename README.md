@@ -44,7 +44,8 @@ them by hand.
    frame mapping exact.
 4. Mark the shots to process. In **Clips to process** choose how MatchRef finds
    them — by **clip color**, by **flag**, the current **timeline selection**, **all
-   clips**, or a **whole track** — and pick the color. (Default: clip color Purple.)
+   clips**, or a **whole track** — and pick the color. (Default: automatic —
+   timeline selection, then clip color Purple, then all clips.)
    Don't mark the lock cut on the timeline.
 5. Launch MatchRef, point it at the offline reference (and conform file), and
    run it. With Dry Run off it writes straight to the Edit Inspector.
