@@ -68,16 +68,7 @@ def get_target_clips_with_source(
         return all_items, f"all video clips ({len(all_items)})"
 
     if mode == "track":
-        track_index = int(config.get("video_track_index", 1))
-        try:
-            track_items = timeline.GetItemListInTrack("video", track_index)
-        except Exception:
-            return [], "track (empty)"
-        if isinstance(track_items, dict):
-            clips = [v for v in track_items.values() if v is not None]
-        else:
-            clips = list(track_items or [])
-        return clips, f"track V{track_index} ({len(clips)})"
+        return _track_clips(timeline, config)
 
     if mode == "playhead":
         try:
@@ -98,7 +89,31 @@ def get_target_clips_with_source(
         clips = _try_get_selected_items(timeline) or _try_alternate_selection(timeline)
         return clips, f"timeline selection API ({len(clips)})"
 
-    # auto: API selection → clip color → flags → all clips
+    return _auto_clips(timeline, config, color, all_items, log)
+
+
+def _track_clips(timeline: Any, config: AppConfig) -> tuple[list[Any], str]:
+    """All clips on the configured video track."""
+    track_index = int(config.get("video_track_index", 1))
+    try:
+        track_items = timeline.GetItemListInTrack("video", track_index)
+    except Exception:
+        return [], "track (empty)"
+    if isinstance(track_items, dict):
+        clips = [v for v in track_items.values() if v is not None]
+    else:
+        clips = list(track_items or [])
+    return clips, f"track V{track_index} ({len(clips)})"
+
+
+def _auto_clips(
+    timeline: Any,
+    config: AppConfig,
+    color: str,
+    all_items: list[Any],
+    log: logging.Logger,
+) -> tuple[list[Any], str]:
+    """Auto cascade: API selection → clip color → flags → all clips → playhead."""
     selected = _try_get_selected_items(timeline) or _try_alternate_selection(timeline)
     if selected:
         log.info("Using %d clip(s) from Resolve selection API.", len(selected))

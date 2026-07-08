@@ -43,6 +43,53 @@ class MatchRefPipeline:
         """
         Analyze and optionally apply clip-by-clip with live status callbacks.
         """
+        clips, source = self._target_clips()
+        dry_run = bool(self.config.get("dry_run", False))
+        self._emit_run_header(on_message, len(clips), source)
+        analyzer, applier = self._build_workers(dry_run)
+
+        report = AnalysisReport()
+
+        try:
+            filtered, skipped = analyzer.prepare_batch(clips)
+            report.skipped.extend(skipped)
+            total = len(filtered)
+            if total == 0 and report.skipped:
+                self._emit_all_skipped(on_message, report.skipped)
+            self._emit(on_message, f"Processing {total} clip(s)…")
+
+            for index, item in enumerate(filtered, start=1):
+                if should_cancel and should_cancel():
+                    self._emit(on_message, "Stopped by user.")
+                    break
+                if not self._process_clip(
+                    on_message,
+                    should_cancel,
+                    analyzer,
+                    applier,
+                    report,
+                    item,
+                    index,
+                    total,
+                    dry_run,
+                ):
+                    self._emit(on_message, "Stopped by user.")
+                    break
+
+        finally:
+            analyzer.close()
+
+        ready = len(report.ready_clips)
+        problems = len(report.problem_clips)
+        self._emit(
+            on_message,
+            f"Finished: {ready} ready, {problems} problem, {len(report.skipped)} skipped.",
+        )
+        log_final_report(self.logger, report)
+        return report
+
+    def _target_clips(self) -> tuple[list[Any], str]:
+        """Connect (if needed) and resolve the clip selection; raises when empty."""
         if self.timeline is None:
             self.connect()
         assert self.timeline is not None
@@ -58,25 +105,14 @@ class MatchRefPipeline:
                 "No clips to process. Set clip_selection_mode to 'all_filtered' in "
                 "config/user_config.json, or flag all shots with Purple."
             )
+        return clips, source
 
-        dry_run = bool(self.config.get("dry_run", False))
-        debug_dir = resolve_debug_dir(self.config)
-        self._emit(on_message, f"Clips: {len(clips)} ({source})")
-        self._emit(
-            on_message,
-            f"Timeline hub: {self.timeline_ctx.width}x{self.timeline_ctx.height} @ "
-            f"{self.timeline_ctx.fps:.3f} fps",
-        )
-        if debug_dir:
-            self._emit(on_message, f"Debug folder: {debug_dir}")
-        xml = str(self.config.get("conform_xml_path", "")).strip()
-        edl = str(self.config.get("conform_edl_path", "")).strip()
-        if not xml and not edl:
-            self._emit(
-                on_message,
-                "WARNING: no Conform XML/EDL — frame mapping may be wrong. Set conform file in GUI.",
-            )
-
+    def _build_workers(
+        self, dry_run: bool
+    ) -> tuple[TransformAnalyzer, EditTransformApplier | None]:
+        """Analyzer + (unless dry run) applier bound to the connected timeline."""
+        assert self.timeline_ctx is not None
+        assert self.resolve is not None
         analyzer = TransformAnalyzer(
             self.config,
             self.timeline_ctx,
@@ -91,66 +127,79 @@ class MatchRefPipeline:
                 self.timeline_ctx,
                 self.logger,
             )
+        return analyzer, applier
 
-        report = AnalysisReport()
-
-        try:
-            filtered, skipped = analyzer.prepare_batch(clips)
-            report.skipped.extend(skipped)
-            total = len(filtered)
-            if total == 0 and report.skipped:
-                self._emit(
-                    on_message,
-                    f"All {len(report.skipped)} selected clip(s) were skipped — nothing to "
-                    "process. Reasons:",
-                )
-                for reason in report.skipped[:10]:
-                    self._emit(on_message, f"  • {reason}")
-            self._emit(on_message, f"Processing {total} clip(s)…")
-
-            for index, item in enumerate(filtered, start=1):
-                if should_cancel and should_cancel():
-                    self._emit(on_message, "Stopped by user.")
-                    break
-
-                name = _clip_name(item)
-                self._emit(on_message, f"[{index}/{total}] Analyzing: {name}")
-
-                result = analyzer.analyze_one(item, should_cancel=should_cancel)
-                if should_cancel and should_cancel():
-                    self._emit(on_message, "Stopped by user.")
-                    break
-                if result is None:
-                    self._emit(on_message, "  Skipped (no media).")
-                    continue
-
-                report.results.append(result)
-                self._summarize_clip(on_message, result)
-
-                if dry_run:
-                    continue
-
-                if result.is_valid and applier is not None:
-                    self._emit(on_message, "  Applying transform…")
-                    try:
-                        applier.apply_clip(result)
-                        self._emit(on_message, f"  Applied: {name}")
-                    except Exception as exc:  # noqa: BLE001
-                        self._emit(on_message, f"  Apply failed: {exc}")
-                elif result.problem:
-                    self._emit(on_message, "  Not applied (problem clip).")
-
-        finally:
-            analyzer.close()
-
-        ready = len(report.ready_clips)
-        problems = len(report.problem_clips)
+    def _emit_run_header(
+        self, on_message: Callable[[str], None] | None, clip_count: int, source: str
+    ) -> None:
+        """Describe the run (clip count, hub format, debug dir, conform warning)."""
+        assert self.timeline_ctx is not None
+        self._emit(on_message, f"Clips: {clip_count} ({source})")
         self._emit(
             on_message,
-            f"Finished: {ready} ready, {problems} problem, {len(report.skipped)} skipped.",
+            f"Timeline hub: {self.timeline_ctx.width}x{self.timeline_ctx.height} @ "
+            f"{self.timeline_ctx.fps:.3f} fps",
         )
-        log_final_report(self.logger, report)
-        return report
+        debug_dir = resolve_debug_dir(self.config)
+        if debug_dir:
+            self._emit(on_message, f"Debug folder: {debug_dir}")
+        xml = str(self.config.get("conform_xml_path", "")).strip()
+        edl = str(self.config.get("conform_edl_path", "")).strip()
+        if not xml and not edl:
+            self._emit(
+                on_message,
+                "WARNING: no Conform XML/EDL — frame mapping may be wrong. Set conform file in GUI.",
+            )
+
+    def _emit_all_skipped(
+        self, on_message: Callable[[str], None] | None, skipped: list[str]
+    ) -> None:
+        self._emit(
+            on_message,
+            f"All {len(skipped)} selected clip(s) were skipped — nothing to process. Reasons:",
+        )
+        for reason in skipped[:10]:
+            self._emit(on_message, f"  • {reason}")
+
+    def _process_clip(
+        self,
+        on_message: Callable[[str], None] | None,
+        should_cancel: Callable[[], bool] | None,
+        analyzer: TransformAnalyzer,
+        applier: EditTransformApplier | None,
+        report: AnalysisReport,
+        item: Any,
+        index: int,
+        total: int,
+        dry_run: bool,
+    ) -> bool:
+        """Analyze one clip, record it, and apply when valid. False = cancelled mid-clip."""
+        name = _clip_name(item)
+        self._emit(on_message, f"[{index}/{total}] Analyzing: {name}")
+
+        result = analyzer.analyze_one(item, should_cancel=should_cancel)
+        if should_cancel and should_cancel():
+            return False
+        if result is None:
+            self._emit(on_message, "  Skipped (no media).")
+            return True
+
+        report.results.append(result)
+        self._summarize_clip(on_message, result)
+
+        if dry_run:
+            return True
+
+        if result.is_valid and applier is not None:
+            self._emit(on_message, "  Applying transform…")
+            try:
+                applier.apply_clip(result)
+                self._emit(on_message, f"  Applied: {name}")
+            except Exception as exc:  # noqa: BLE001
+                self._emit(on_message, f"  Apply failed: {exc}")
+        elif result.problem:
+            self._emit(on_message, "  Not applied (problem clip).")
+        return True
 
     def _summarize_clip(
         self,
