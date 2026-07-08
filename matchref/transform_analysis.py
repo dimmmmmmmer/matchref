@@ -336,10 +336,9 @@ class TransformAnalyzer:
         # When we only keep the single best sample (apply_transform_select="best"),
         # refining every sample is wasted work: try the mid frame first (most
         # representative of a shot) so a confident match lets us stop early.
-        stop_on_confident = (
-            str(self.config.get("apply_transform_select", "best")).lower() == "best"
-            and bool(self.config.get("refine_stop_on_confident_sample", True))
-        )
+        stop_on_confident = str(
+            self.config.get("apply_transform_select", "best")
+        ).lower() == "best" and bool(self.config.get("refine_stop_on_confident_sample", True))
         confident_score = float(self.config.get("confident_sample_score", 0.96))
         min_scale_apply = float(self.config.get("min_alignment_scale", 0.4))
         max_scale_apply = float(self.config.get("max_alignment_scale", 2.5))
@@ -351,7 +350,9 @@ class TransformAnalyzer:
             self.config.get("transform_base_scale", self.config.get("fusion_base_size", 1.0))
         )
         base_center = tuple(
-            self.config.get("transform_base_center", self.config.get("fusion_base_center", [0.5, 0.5]))
+            self.config.get(
+                "transform_base_center", self.config.get("fusion_base_center", [0.5, 0.5])
+            )
         )
         base_angle = float(
             self.config.get("transform_base_angle", self.config.get("fusion_base_angle", 0.0))
@@ -384,9 +385,7 @@ class TransformAnalyzer:
             match_base_angle=match_base_angle,
         )
 
-    def _load_sample(
-        self, ctx: _ClipContext, point: Any, local_frame: int
-    ) -> _SampleFrames:
+    def _load_sample(self, ctx: _ClipContext, point: Any, local_frame: int) -> _SampleFrames:
         """Resolve the offline mapping and decode the online/offline frame pair.
 
         Returns a ``_SampleFrames`` bundle; ``terminal`` is set (and the sample is
@@ -483,7 +482,9 @@ class TransformAnalyzer:
             compensated=compensate and online_raw is not None,
             offline_decoded_index=offline_reported,
         )
-        self.logger.info("[%s %s] %s", result.clip_name, point.value, compare_line.replace("\n", " | "))
+        self.logger.info(
+            "[%s %s] %s", result.clip_name, point.value, compare_line.replace("\n", " | ")
+        )
 
         if (
             self.conform.is_available
@@ -578,9 +579,7 @@ class TransformAnalyzer:
                     admit,
                 )
             else:
-                sample.message = (
-                    f"score below admission ({alignment.ecc_score:.4f} < {admit:.2f})"
-                )
+                sample.message = f"score below admission ({alignment.ecc_score:.4f} < {admit:.2f})"
                 result.samples.append(sample)
                 result.warnings.append(
                     f"{point.value}: ECC {alignment.ecc_score:.4f} < {admit:.2f} "
@@ -611,9 +610,8 @@ class TransformAnalyzer:
             )
         sample.warp_matrix = warp
 
-        skip_refine = (
-            refine_early_exit_enabled(self.config)
-            and sample_score_passes(alignment.ecc_score, self.config)
+        skip_refine = refine_early_exit_enabled(self.config) and sample_score_passes(
+            alignment.ecc_score, self.config
         )
         if skip_refine:
             self.logger.info(
@@ -723,9 +721,7 @@ class TransformAnalyzer:
         if bool(self.config.get("perspective_match_enabled", False)):
             from matchref.perspective import solve_homography
 
-            sample.homography = solve_homography(
-                online, offline, self.config, timeline_size=canvas
-            )
+            sample.homography = solve_homography(online, offline, self.config, timeline_size=canvas)
         transform_vectors.append((scale, pos_x, pos_y, angle))
         result.samples.append(sample)
         log_sample(self.logger, result.clip_name, sample)
@@ -978,7 +974,9 @@ class TransformAnalyzer:
 
                 g = _Reference(offline, self.config).gradient_ncc(result_render)
                 flag = "  <-- LOW, likely misaligned" if g < 0.4 else ""
-                extra.append(f"applied structure (gradient-NCC of result vs offline): {g:.3f}{flag}")
+                extra.append(
+                    f"applied structure (gradient-NCC of result vs offline): {g:.3f}{flag}"
+                )
             except Exception:  # noqa: BLE001
                 result_render = None
 

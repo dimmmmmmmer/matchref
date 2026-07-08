@@ -46,8 +46,8 @@ def test_cornerpin_normalizes_with_y_up() -> None:
     corners = [(0.0, 0.0), (W, 0.0), (W, H), (0.0, H)]
     cp = corners_to_cornerpin(corners, W, H)
     assert isinstance(cp, CornerPin)
-    assert cp.top_left == (0.0, 1.0)       # pixel (0,0) → normalized (0,1) (Y up)
-    assert cp.bottom_left == (0.0, 0.0)    # pixel (0,H) → normalized (0,0)
+    assert cp.top_left == (0.0, 1.0)  # pixel (0,0) → normalized (0,1) (Y up)
+    assert cp.bottom_left == (0.0, 0.0)  # pixel (0,H) → normalized (0,0)
     assert cp.top_right == (1.0, 1.0)
     assert cp.bottom_right == (1.0, 0.0)
 

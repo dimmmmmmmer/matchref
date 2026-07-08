@@ -410,7 +410,9 @@ class MatchRefWindow(QMainWindow):
         path = resolve_debug_dir(self.config) if self.debug_cb.isChecked() else None
         if path is None:
             raw = self.debug_dir_edit.text().strip()
-            path = Path(raw).expanduser() if raw else Path.home() / "Documents" / "matchref" / "debug"
+            path = (
+                Path(raw).expanduser() if raw else Path.home() / "Documents" / "matchref" / "debug"
+            )
         path.mkdir(parents=True, exist_ok=True)
         _open_in_file_manager(path)
 

@@ -112,8 +112,7 @@ def save_match_debug(
         rh, rw = online_raw.shape[:2]
         fh, fw = online_for_match.shape[:2]
         raw_line = (
-            f"online_raw_source: {rw}x{rh} (native source, before fit) "
-            f"→ fit canvas {fw}x{fh}"
+            f"online_raw_source: {rw}x{rh} (native source, before fit) → fit canvas {fw}x{fh}"
         )
     cv2.imwrite(str(base / "online_for_match.jpg"), online_for_match)
     cv2.imwrite(str(base / "offline_reference.jpg"), offline_ref)
@@ -150,7 +149,9 @@ def format_sample_compare_line(
     compensated: bool,
     offline_decoded_index: int = -1,
 ) -> str:
-    comp = "yes (current Edit on source before match)" if compensated else "no (identity / fit only)"
+    comp = (
+        "yes (current Edit on source before match)" if compensated else "no (identity / fit only)"
+    )
     decode_note = ""
     if offline_decoded_index >= 0:
         decode_note = f" | decoded index {offline_decoded_index}"

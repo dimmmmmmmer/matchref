@@ -121,7 +121,9 @@ def prepare_gray_uint8(
     return gray
 
 
-def decompose_affine(warp_matrix: np.ndarray, image_shape: tuple[int, ...]) -> tuple[float, float, float, float]:
+def decompose_affine(
+    warp_matrix: np.ndarray, image_shape: tuple[int, ...]
+) -> tuple[float, float, float, float]:
     """Scale, normalized translation (tx/w, ty/h) and rotation from a warp."""
     from matchref.transform_convert import decompose_warp_matrix
 
@@ -328,9 +330,9 @@ def _try_ecc(
 
     from matchref.edit_quantize import edit_priority_zoom
 
-    refine_trans = bool(config.get("alignment_refine_translation", True)) and not edit_priority_zoom(
-        config
-    )
+    refine_trans = bool(
+        config.get("alignment_refine_translation", True)
+    ) and not edit_priority_zoom(config)
     if refine_trans and init is None:
         try:
             score, warp = _run_ecc(
@@ -380,12 +382,10 @@ def _align_features(
     if len(good) < 8:
         return None
 
-    offline_pts = np.array(
-        [kp_off[m.queryIdx].pt for m in good], dtype=np.float32
-    ).reshape(-1, 1, 2)
-    online_pts = np.array(
-        [kp_on[m.trainIdx].pt for m in good], dtype=np.float32
-    ).reshape(-1, 1, 2)
+    offline_pts = np.array([kp_off[m.queryIdx].pt for m in good], dtype=np.float32).reshape(
+        -1, 1, 2
+    )
+    online_pts = np.array([kp_on[m.trainIdx].pt for m in good], dtype=np.float32).reshape(-1, 1, 2)
 
     warp, inliers = cv2.estimateAffinePartial2D(
         online_pts,
@@ -456,8 +456,10 @@ def _pyramid_ecc(
             best = ecc
         last_mw = mw
 
-    if best is not None and warp is not None and bool(
-        config.get("refine_subpixel_translation", True)
+    if (
+        best is not None
+        and warp is not None
+        and bool(config.get("refine_subpixel_translation", True))
     ):
         on_full, off_full, _mask_full, _ = _prepare_match_pair(
             online_frame,

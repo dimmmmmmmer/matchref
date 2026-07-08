@@ -333,6 +333,5 @@ class EditTransformApplier:
                 mismatches.append(f"{key}: wrote {float(value):.4f}, read {actual:.4f}")
         if mismatches:
             raise RuntimeError(
-                "Apply not confirmed (Resolve value differs after write): "
-                + "; ".join(mismatches)
+                "Apply not confirmed (Resolve value differs after write): " + "; ".join(mismatches)
             )

@@ -26,7 +26,9 @@ class AppConfig:
     """Application settings backed by JSON files."""
 
     def __init__(self, path: Path | None = None) -> None:
-        self._path = path or (USER_CONFIG_PATH if USER_CONFIG_PATH.exists() else DEFAULT_CONFIG_PATH)
+        self._path = path or (
+            USER_CONFIG_PATH if USER_CONFIG_PATH.exists() else DEFAULT_CONFIG_PATH
+        )
         self._data: dict[str, Any] = {}
         self.reload()
 

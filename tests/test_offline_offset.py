@@ -33,9 +33,7 @@ def test_offset_not_double_counted_on_timeline_fallback() -> None:
     resolver.configure_lock_cut(lock_cut_hub_origin=0)
 
     # reel + source frame that are NOT in the conform → timeline fallback path
-    mapping = resolver.resolve(
-        timeline_frame=3295, reel_name="Stock Bonfire", source_frame=5000
-    )
+    mapping = resolver.resolve(timeline_frame=3295, reel_name="Stock Bonfire", source_frame=5000)
     assert mapping.offline_frame == 3296  # 3295 + 1, not + 2
 
 
@@ -45,7 +43,5 @@ def test_zero_offset_is_identity() -> None:
     index = _conform_with_event(cfg)
     resolver = OfflineFrameResolver(cfg, conform=index)
     resolver.configure_lock_cut(lock_cut_hub_origin=0)
-    mapping = resolver.resolve(
-        timeline_frame=3295, reel_name="Stock Bonfire", source_frame=5000
-    )
+    mapping = resolver.resolve(timeline_frame=3295, reel_name="Stock Bonfire", source_frame=5000)
     assert mapping.offline_frame == 3295

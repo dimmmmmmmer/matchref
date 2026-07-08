@@ -11,9 +11,7 @@ from matchref.conform_edl import EdlEvent
 from matchref.fps import effective_fps_from_xml_rate
 from matchref.timecode import TimecodeFormat, parse_timecode
 
-_FCPXML_TIME_RE = re.compile(
-    r"^(?:(?P<h>\d+)s)?(?:(?P<num>-?\d+)/(?P<den>\d+)s)?$"
-)
+_FCPXML_TIME_RE = re.compile(r"^(?:(?P<h>\d+)s)?(?:(?P<num>-?\d+)/(?P<den>\d+)s)?$")
 
 
 @dataclass
@@ -27,7 +25,11 @@ class XmlParseResult:
 def parse_conform_xml(path: str | Path, default_fps: float = 24.0) -> XmlParseResult:
     root = ET.parse(path).getroot()
     tag = root.tag.lower()
-    if "fcpxml" in tag or root.find(".//sequence") is not None and root.find(".//spine") is not None:
+    if (
+        "fcpxml" in tag
+        or root.find(".//sequence") is not None
+        and root.find(".//spine") is not None
+    ):
         return _parse_fcpxml(root, default_fps)
     return _parse_xmeml(root, default_fps)
 
@@ -74,7 +76,9 @@ def _parse_fcpxml(root: ET.Element, default_fps: float) -> XmlParseResult:
     tc_start = sequence.find("timecode")
     if tc_start is not None and tc_start.get("value"):
         try:
-            result.sequence_start_frames = parse_timecode(tc_start.get("value", ""), result.timecode_format)
+            result.sequence_start_frames = parse_timecode(
+                tc_start.get("value", ""), result.timecode_format
+            )
         except ValueError:
             result.sequence_start_frames = 0
 
@@ -125,7 +129,9 @@ def _parse_fcpxml(root: ET.Element, default_fps: float) -> XmlParseResult:
     return result
 
 
-def _timecode_format_from_rate_element(rate_el: ET.Element | None, default: TimecodeFormat) -> TimecodeFormat:
+def _timecode_format_from_rate_element(
+    rate_el: ET.Element | None, default: TimecodeFormat
+) -> TimecodeFormat:
     if rate_el is None:
         return default
     timebase = 0.0
@@ -147,7 +153,9 @@ def _timecode_format_from_rate_element(rate_el: ET.Element | None, default: Time
     return default
 
 
-def _sequence_start_from_node(sequence: ET.Element, fmt: TimecodeFormat) -> tuple[int, TimecodeFormat]:
+def _sequence_start_from_node(
+    sequence: ET.Element, fmt: TimecodeFormat
+) -> tuple[int, TimecodeFormat]:
     """Read sequence origin timecode / frame from XMEML / DaVinci XML."""
     tc = sequence.find("timecode")
     if tc is None:

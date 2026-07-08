@@ -155,9 +155,7 @@ def apply_clip_edit_to_frame(
     width, height = int(canvas_size[0]), int(canvas_size[1])
     if width <= 0 or height <= 0:
         return frame
-    canvas = _fit_frame_to_canvas(
-        frame, width, height, str(config.get("input_scaling", "fit"))
-    )
+    canvas = _fit_frame_to_canvas(frame, width, height, str(config.get("input_scaling", "fit")))
     if (
         abs(edit.zoom - 1.0) < 1e-4
         and abs(edit.pan) < 1e-3

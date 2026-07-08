@@ -152,7 +152,9 @@ class _Reference:
             # content (fire/smoke) where gradient alone is unreliable.
             wg = float(self._config.get("refine_blend_gradient_weight", 0.5))
             wg = min(1.0, max(0.0, wg))
-            return 1.0 - (wg * self.gradient_ncc(rendered) + (1.0 - wg) * self.intensity_ncc(rendered))
+            return 1.0 - (
+                wg * self.gradient_ncc(rendered) + (1.0 - wg) * self.intensity_ncc(rendered)
+            )
         return 1.0 - self.gradient_ncc(rendered)
 
 
@@ -212,7 +214,12 @@ def refine_resolve_edit(
         )
         if bool(config.get("refine_fine_polish", True)):
             return _fine_polish(
-                online_raw, offline_ref, canvas_size, config, upscaled, coarse.strategy,
+                online_raw,
+                offline_ref,
+                canvas_size,
+                config,
+                upscaled,
+                coarse.strategy,
                 should_cancel=should_cancel,
             )
         return RefineOutcome(
@@ -231,7 +238,12 @@ def refine_resolve_edit(
     )
     if bool(config.get("refine_fine_polish", True)):
         return _fine_polish(
-            online_raw, offline_ref, canvas_size, config, direct.edit, direct.strategy,
+            online_raw,
+            offline_ref,
+            canvas_size,
+            config,
+            direct.edit,
+            direct.strategy,
             should_cancel=should_cancel,
         )
     return direct
@@ -310,7 +322,9 @@ def _fine_polish(
         def zoom_cost(p: list[float]) -> float:
             edit = ClipEditTransform(p[0], p[0], px, py, state[3] if use_rot else 0.0)
             try:
-                return 1.0 - ref.gradient_ncc(_render_with_edit(online_raw, edit, canvas_size, config))
+                return 1.0 - ref.gradient_ncc(
+                    _render_with_edit(online_raw, edit, canvas_size, config)
+                )
             except Exception:
                 return 1e12
 
@@ -331,7 +345,9 @@ def _fine_polish(
         g_with = ref.gradient_ncc(
             _render_with_edit(
                 online_raw,
-                ClipEditTransform(state[0], state[0], state[1], state[2], state[3] if use_rot else 0.0),
+                ClipEditTransform(
+                    state[0], state[0], state[1], state[2], state[3] if use_rot else 0.0
+                ),
                 canvas_size,
                 config,
             )

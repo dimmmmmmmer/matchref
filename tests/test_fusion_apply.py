@@ -30,14 +30,17 @@ def test_centered_zoom_maps_to_center_half() -> None:
 
 def test_pan_tilt_map_to_normalized_center() -> None:
     xf = fusion_transform_values(_resolved(pan=192.0, tilt=108.0), SIZE)
-    assert abs(xf.center_x - 0.6) < 1e-9   # 192 / 1920
-    assert abs(xf.center_y - 0.6) < 1e-9   # 108 / 1080
+    assert abs(xf.center_x - 0.6) < 1e-9  # 192 / 1920
+    assert abs(xf.center_y - 0.6) < 1e-9  # 108 / 1080
 
 
 def _animated_result(frames: list[int]) -> ClipAnalysisResult:
     r = ClipAnalysisResult(
-        clip_name="ramp", timeline_item_id="x", track_type="video",
-        track_index=1, duration_frames=max(frames) + 1,
+        clip_name="ramp",
+        timeline_item_id="x",
+        track_type="video",
+        track_index=1,
+        duration_frames=max(frames) + 1,
     )
     r.animated = True
     for i, f in enumerate(frames):

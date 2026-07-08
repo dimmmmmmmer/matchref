@@ -27,9 +27,7 @@ class CornerPin:
     bottom_left: tuple[float, float]
 
 
-def homography_corners(
-    warp: np.ndarray, width: int, height: int
-) -> list[tuple[float, float]]:
+def homography_corners(warp: np.ndarray, width: int, height: int) -> list[tuple[float, float]]:
     """Map the four frame corners (TL, TR, BR, BL) through a 3x3 homography.
 
     Returns pixel coordinates. A 2x3 affine is accepted and treated as the top two
@@ -52,9 +50,7 @@ def homography_corners(
     return out
 
 
-def corners_to_cornerpin(
-    corners: list[tuple[float, float]], width: int, height: int
-) -> CornerPin:
+def corners_to_cornerpin(corners: list[tuple[float, float]], width: int, height: int) -> CornerPin:
     """Pixel corners (TL, TR, BR, BL) → normalized Fusion CornerPin (Y up)."""
     if len(corners) != 4:
         raise ValueError("expected 4 corners")
@@ -129,7 +125,12 @@ def solve_homography(
     )
     try:
         _, warp = cv2.findTransformECC(  # type: ignore[call-overload]
-            off, on, warp, cv2.MOTION_HOMOGRAPHY, criteria, None,
+            off,
+            on,
+            warp,
+            cv2.MOTION_HOMOGRAPHY,
+            criteria,
+            None,
             int(config.get("ecc_gauss_filt_size", 5)),
         )
     except cv2.error:

@@ -13,8 +13,11 @@ SIZE = (1920, 1080)
 
 def _result(*, with_homography: bool) -> ClipAnalysisResult:
     r = ClipAnalysisResult(
-        clip_name="c", timeline_item_id="c", track_type="video",
-        track_index=1, duration_frames=100,
+        clip_name="c",
+        timeline_item_id="c",
+        track_type="video",
+        track_index=1,
+        duration_frames=100,
     )
     s = TransformSample(sample_point=SamplePoint.MID, clip_local_frame=50, timeline_frame=50)
     s.ok = True

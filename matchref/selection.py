@@ -44,9 +44,7 @@ def _try_alternate_selection(timeline: Any) -> list[Any]:
 def _selection_color(config: AppConfig) -> str:
     """Clip color / flag color name (e.g. Purple, Green, Orange)."""
     return str(
-        config.get("selection_clip_color")
-        or config.get("selection_flag_color")
-        or "Purple"
+        config.get("selection_clip_color") or config.get("selection_flag_color") or "Purple"
     ).strip()
 
 

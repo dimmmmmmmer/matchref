@@ -32,9 +32,7 @@ class TimelineContext:
                 "Open the correct timeline and retry."
             )
         if info.width <= 0 or info.height <= 0:
-            raise TimelineContextError(
-                "Cannot read timeline resolution from DaVinci Resolve."
-            )
+            raise TimelineContextError("Cannot read timeline resolution from DaVinci Resolve.")
         return cls(
             fps=info.fps,
             width=info.width,

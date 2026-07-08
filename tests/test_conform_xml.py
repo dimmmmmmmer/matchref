@@ -58,8 +58,8 @@ def test_fcpxml_events_and_record_cursor(tmp_path: Path) -> None:
     a, b = res.events
     assert a.clip_name == "ClipA"
     assert a.reel == "SHOT_A"  # resolved from the asset name
-    assert (a.rec_in, a.rec_out) == (0, 96)        # 4s @ 24
-    assert (b.rec_in, b.rec_out) == (96, 216)      # back-to-back, 5s @ 24
+    assert (a.rec_in, a.rec_out) == (0, 96)  # 4s @ 24
+    assert (b.rec_in, b.rec_out) == (96, 216)  # back-to-back, 5s @ 24
     assert b.reel == "SHOT_B"
 
 
