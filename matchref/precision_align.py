@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 import cv2
 import numpy as np
@@ -167,6 +168,59 @@ def _render_with_edit(
     return apply_clip_edit_to_frame(online_raw, edit, canvas_size, config)
 
 
+def _coarse_then_polish(
+    online_raw: np.ndarray,
+    offline_ref: np.ndarray,
+    canvas_size: tuple[int, int],
+    config: AppConfig,
+    initial: ClipEditTransform,
+    warp: np.ndarray | None,
+    scale: float,
+    should_cancel: Callable[[], bool] | None,
+) -> RefineOutcome:
+    """Search on a downscaled canvas, then polish (or return the upscaled coarse result)."""
+    width, height = int(canvas_size[0]), int(canvas_size[1])
+    rw, rh = max(2, int(round(width * scale))), max(2, int(round(height * scale)))
+    # Only shrink the *canvas* — pass the raw frames through so _fit_frame_to_canvas
+    # letterboxes them aspect-correctly at the reduced size (pre-resizing online_raw
+    # to the canvas would stretch a non-2:1 source and wreck the match).
+    seed = ClipEditTransform(
+        zoom_x=initial.zoom_x,
+        zoom_y=initial.zoom_y,
+        pan=initial.pan * scale,
+        tilt=initial.tilt * scale,
+        rotation_deg=initial.rotation_deg,
+    )
+    coarse = _refine_at_canvas(
+        online_raw, offline_ref, (rw, rh), config, seed, warp, should_cancel=should_cancel
+    )
+    edit = coarse.edit
+    upscaled = ClipEditTransform(
+        zoom_x=edit.zoom_x,
+        zoom_y=edit.zoom_y,
+        pan=edit.pan / scale,
+        tilt=edit.tilt / scale,
+        rotation_deg=edit.rotation_deg,
+    )
+    if bool(config.get("refine_fine_polish", True)):
+        return _fine_polish(
+            online_raw,
+            offline_ref,
+            canvas_size,
+            config,
+            upscaled,
+            coarse.strategy,
+            should_cancel=should_cancel,
+        )
+    return RefineOutcome(
+        edit=quantize_clip_edit(upscaled, config),
+        ncc=coarse.ncc,
+        used_position=coarse.used_position,
+        strategy=coarse.strategy,
+        gradient_ncc=coarse.gradient_ncc,
+    )
+
+
 def refine_resolve_edit(
     online_raw: np.ndarray,
     offline_ref: np.ndarray,
@@ -186,48 +240,18 @@ def refine_resolve_edit(
     downscaled canvas gives a smooth, robust landscape — and is several times faster.
     Zoom/rotation are scale-invariant; Pan/Tilt are scaled back to full canvas.
     """
-    width, height = int(canvas_size[0]), int(canvas_size[1])
+    width = int(canvas_size[0])
     refine_w = int(config.get("refine_max_width", 1920))
     if refine_w > 0 and width > refine_w:
-        scale = refine_w / float(width)
-        rw, rh = max(2, int(round(width * scale))), max(2, int(round(height * scale)))
-        # Only shrink the *canvas* — pass the raw frames through so _fit_frame_to_canvas
-        # letterboxes them aspect-correctly at the reduced size (pre-resizing online_raw
-        # to the canvas would stretch a non-2:1 source and wreck the match).
-        seed = ClipEditTransform(
-            zoom_x=initial.zoom_x,
-            zoom_y=initial.zoom_y,
-            pan=initial.pan * scale,
-            tilt=initial.tilt * scale,
-            rotation_deg=initial.rotation_deg,
-        )
-        coarse = _refine_at_canvas(
-            online_raw, offline_ref, (rw, rh), config, seed, warp, should_cancel=should_cancel
-        )
-        edit = coarse.edit
-        upscaled = ClipEditTransform(
-            zoom_x=edit.zoom_x,
-            zoom_y=edit.zoom_y,
-            pan=edit.pan / scale,
-            tilt=edit.tilt / scale,
-            rotation_deg=edit.rotation_deg,
-        )
-        if bool(config.get("refine_fine_polish", True)):
-            return _fine_polish(
-                online_raw,
-                offline_ref,
-                canvas_size,
-                config,
-                upscaled,
-                coarse.strategy,
-                should_cancel=should_cancel,
-            )
-        return RefineOutcome(
-            edit=quantize_clip_edit(upscaled, config),
-            ncc=coarse.ncc,
-            used_position=coarse.used_position,
-            strategy=coarse.strategy,
-            gradient_ncc=coarse.gradient_ncc,
+        return _coarse_then_polish(
+            online_raw,
+            offline_ref,
+            canvas_size,
+            config,
+            initial,
+            warp,
+            refine_w / float(width),
+            should_cancel,
         )
 
     # No coarse downscale (canvas <= refine_max_width). Still run the fine polish so
@@ -267,11 +291,7 @@ def _fine_polish(
     spurious minimum the way a full-resolution search from scratch does — while
     recovering the ~1-2px quantisation lost to the downscaled pass.
     """
-    width, height = int(canvas_size[0]), int(canvas_size[1])
-    offline_fit = offline_ref
-    if offline_fit.shape[1] != width or offline_fit.shape[0] != height:
-        offline_fit = cv2.resize(offline_ref, (width, height), interpolation=cv2.INTER_AREA)
-    ref = _Reference(offline_fit, config)
+    ref = _fitted_reference(offline_ref, canvas_size, config)
     use_rot = not bool(config.get("lock_alignment_rotation", False))
 
     def cost(p: list[float]) -> float:
@@ -299,69 +319,13 @@ def _fine_polish(
     # the gradient domain the content is rigid with clear structure (e.g. A031), so
     # pin zoom to the sharp gradient peak — its exact value (1.124, vs the ~1.122 the
     # broad intensity term settles for). Non-rigid fire/smoke scores low → left as is.
-    aligned_render = _render_with_edit(
-        online_raw,
-        ClipEditTransform(state[0], state[0], state[1], state[2], state[3] if use_rot else 0.0),
-        canvas_size,
-        config,
-    )
-    gradient_lock = ref.gradient_ncc(aligned_render) >= float(
+    aligned_render = _render_state(state, online_raw, canvas_size, config, use_rot)
+    if ref.gradient_ncc(aligned_render) >= float(
         config.get("refine_fine_gradient_lock_threshold", 0.6)
-    )
+    ):
+        _apply_gradient_zoom_lock(state, ref, online_raw, canvas_size, config, use_rot)
 
-    if gradient_lock:
-        # Final zoom-only pass on the gradient with pan/tilt fixed: the joint search
-        # lets position drag zoom a hair off (1.122), but the gradient zoom peak is
-        # sharp — pinning zoom alone lands it exactly (1.124). Sub-pixel residual
-        # pan/tilt (below the snap threshold, treated as 0 anyway) would shift that
-        # peak, so snap them to 0 first.
-        snap = float(config.get("snap_pan_tilt_below_pixels", 2.0))
-        px = 0.0 if abs(state[1]) < snap else state[1]
-        py = 0.0 if abs(state[2]) < snap else state[2]
-
-        def zoom_cost(p: list[float]) -> float:
-            edit = ClipEditTransform(p[0], p[0], px, py, state[3] if use_rot else 0.0)
-            try:
-                return 1.0 - ref.gradient_ncc(
-                    _render_with_edit(online_raw, edit, canvas_size, config)
-                )
-            except Exception:
-                return 1e12
-
-        zstate = [state[0], 0.0, 0.0, 0.0]
-        for z_step in (0.004, 0.001, 0.0003):
-            zstate = _coordinate_descent(zstate, zoom_cost, deltas=[z_step, 0.0, 0.0, 0.0])
-        state[0], state[1], state[2] = zstate[0], px, py
-
-    # Position parsimony: keep Pan/Tilt only if it earns a real gain in the
-    # (grade-invariant) gradient match. On low-structure clips (smoke/fire/graded)
-    # the position drifts chasing noise while zoom stays right — a genuine reframe
-    # lifts the gradient a lot, a spurious one barely moves it (or makes it worse),
-    # so zero it. Verified across clips: real reframes gain +0.27…+0.56, drifts
-    # gain < 0.12 (one even -0.27).
-    snap = float(config.get("snap_pan_tilt_below_pixels", 2.0))
-    if abs(state[1]) >= snap or abs(state[2]) >= snap:
-        min_gain = float(config.get("refine_position_min_gain", 0.12))
-        g_with = ref.gradient_ncc(
-            _render_with_edit(
-                online_raw,
-                ClipEditTransform(
-                    state[0], state[0], state[1], state[2], state[3] if use_rot else 0.0
-                ),
-                canvas_size,
-                config,
-            )
-        )
-        g_zero = ref.gradient_ncc(
-            _render_with_edit(
-                online_raw,
-                ClipEditTransform(state[0], state[0], 0.0, 0.0, state[3] if use_rot else 0.0),
-                canvas_size,
-                config,
-            )
-        )
-        if g_with - g_zero < min_gain:
-            state[1] = state[2] = 0.0
+    _drop_unjustified_position(state, ref, online_raw, canvas_size, config, use_rot)
 
     final = quantize_clip_edit(
         ClipEditTransform(state[0], state[0], state[1], state[2], state[3] if use_rot else 0.0),
@@ -381,6 +345,86 @@ def _fine_polish(
     )
 
 
+def _fitted_reference(
+    offline_ref: np.ndarray, canvas_size: tuple[int, int], config: AppConfig
+) -> _Reference:
+    """Reference resized to the canvas for cost evaluation."""
+    width, height = int(canvas_size[0]), int(canvas_size[1])
+    if offline_ref.shape[1] != width or offline_ref.shape[0] != height:
+        offline_ref = cv2.resize(offline_ref, (width, height), interpolation=cv2.INTER_AREA)
+    return _Reference(offline_ref, config)
+
+
+def _render_state(
+    state: list[float],
+    online_raw: np.ndarray,
+    canvas_size: tuple[int, int],
+    config: AppConfig,
+    use_rot: bool,
+) -> np.ndarray:
+    """Render the online frame with the search state's (zoom, pan, tilt, rot)."""
+    return _render_with_edit(
+        online_raw,
+        ClipEditTransform(state[0], state[0], state[1], state[2], state[3] if use_rot else 0.0),
+        canvas_size,
+        config,
+    )
+
+
+def _apply_gradient_zoom_lock(
+    state: list[float],
+    ref: _Reference,
+    online_raw: np.ndarray,
+    canvas_size: tuple[int, int],
+    config: AppConfig,
+    use_rot: bool,
+) -> None:
+    """Final zoom-only pass on the gradient with pan/tilt fixed (mutates ``state``)."""
+    # The joint search lets position drag zoom a hair off (1.122), but the gradient
+    # zoom peak is sharp — pinning zoom alone lands it exactly (1.124). Sub-pixel
+    # residual pan/tilt (below the snap threshold, treated as 0 anyway) would shift
+    # that peak, so snap them to 0 first.
+    snap = float(config.get("snap_pan_tilt_below_pixels", 2.0))
+    px = 0.0 if abs(state[1]) < snap else state[1]
+    py = 0.0 if abs(state[2]) < snap else state[2]
+
+    def zoom_cost(p: list[float]) -> float:
+        edit = ClipEditTransform(p[0], p[0], px, py, state[3] if use_rot else 0.0)
+        try:
+            return 1.0 - ref.gradient_ncc(_render_with_edit(online_raw, edit, canvas_size, config))
+        except Exception:
+            return 1e12
+
+    zstate = [state[0], 0.0, 0.0, 0.0]
+    for z_step in (0.004, 0.001, 0.0003):
+        zstate = _coordinate_descent(zstate, zoom_cost, deltas=[z_step, 0.0, 0.0, 0.0])
+    state[0], state[1], state[2] = zstate[0], px, py
+
+
+def _drop_unjustified_position(
+    state: list[float],
+    ref: _Reference,
+    online_raw: np.ndarray,
+    canvas_size: tuple[int, int],
+    config: AppConfig,
+    use_rot: bool,
+) -> None:
+    """Position parsimony: zero Pan/Tilt unless it earns a real gradient-match gain."""
+    # On low-structure clips (smoke/fire/graded) the position drifts chasing noise
+    # while zoom stays right — a genuine reframe lifts the (grade-invariant) gradient
+    # match a lot, a spurious one barely moves it (or makes it worse). Verified
+    # across clips: real reframes gain +0.27…+0.56, drifts gain < 0.12 (one even -0.27).
+    snap = float(config.get("snap_pan_tilt_below_pixels", 2.0))
+    if not (abs(state[1]) >= snap or abs(state[2]) >= snap):
+        return
+    min_gain = float(config.get("refine_position_min_gain", 0.12))
+    g_with = ref.gradient_ncc(_render_state(state, online_raw, canvas_size, config, use_rot))
+    zero_state = [state[0], 0.0, 0.0, state[3]]
+    g_zero = ref.gradient_ncc(_render_state(zero_state, online_raw, canvas_size, config, use_rot))
+    if g_with - g_zero < min_gain:
+        state[1] = state[2] = 0.0
+
+
 def _refine_at_canvas(
     online_raw: np.ndarray,
     offline_ref: np.ndarray,
@@ -391,12 +435,116 @@ def _refine_at_canvas(
     *,
     should_cancel: Callable[[], bool] | None = None,
 ) -> RefineOutcome:
+    ref = _fitted_reference(offline_ref, canvas_size, config)
+    cost_full = _make_edit_cost(online_raw, canvas_size, config, ref)
+
+    if use_multi_strategy_refine(config):
+        return _refine_via_strategies(
+            online_raw, offline_ref, canvas_size, config, initial, cost_full, ref, should_cancel
+        )
+
+    use_rot = not bool(config.get("lock_alignment_rotation", False))
+    zoom_steps = _config_steps(config, "refine_zoom_steps", [0.03, 0.01, 0.002, 0.0005])
+    pan_steps = _config_steps(config, "refine_pan_steps", [4.0, 1.0, 0.25])
+    rot_steps = _config_steps(config, "refine_rotation_steps", [0.2, 0.05])
+
+    if edit_priority_zoom(config):
+        strategy = "legacy"
+        state, used_position = _descend_priority_zoom(
+            online_raw,
+            canvas_size,
+            config,
+            ref,
+            initial,
+            warp,
+            cost_full,
+            zoom_steps,
+            pan_steps,
+            rot_steps,
+            use_rot,
+        )
+    else:
+        strategy = "legacy-all"
+        used_position = True
+        state = _descend_all_params(initial, cost_full, zoom_steps, pan_steps, rot_steps, use_rot)
+
+    return _state_outcome(
+        state, used_position, strategy, online_raw, canvas_size, config, ref, use_rot
+    )
+
+
+def _refine_via_strategies(
+    online_raw: np.ndarray,
+    offline_ref: np.ndarray,
+    canvas_size: tuple[int, int],
+    config: AppConfig,
+    initial: ClipEditTransform,
+    cost_full: Callable[[float, float, float, float], float],
+    ref: _Reference,
+    should_cancel: Callable[[], bool] | None,
+) -> RefineOutcome:
+    """Delegate to the multi-strategy search; gradient score computed on its winner."""
     width, height = int(canvas_size[0]), int(canvas_size[1])
     offline_fit = offline_ref
     if offline_fit.shape[1] != width or offline_fit.shape[0] != height:
         offline_fit = cv2.resize(offline_fit, (width, height), interpolation=cv2.INTER_AREA)
+    outcome = refine_multi_strategy(
+        online_raw=online_raw,
+        offline_fit=offline_fit,
+        canvas_size=canvas_size,
+        config=config,
+        initial=initial,
+        cost_fn=lambda p: cost_full(p[0], p[1], p[2], p[3]),
+        score_fn=ref.score,
+        should_cancel=should_cancel,
+    )
+    outcome.gradient_ncc = ref.gradient_ncc(
+        _render_with_edit(online_raw, outcome.edit, canvas_size, config)
+    )
+    return outcome
 
-    ref = _Reference(offline_fit, config)
+
+def _state_outcome(
+    state: list[float],
+    used_position: bool,
+    strategy: str,
+    online_raw: np.ndarray,
+    canvas_size: tuple[int, int],
+    config: AppConfig,
+    ref: _Reference,
+    use_rot: bool,
+) -> RefineOutcome:
+    """Quantize the search state into an Edit and score its render."""
+    max_zoom = float(config.get("refine_zoom_max", 4.0))
+    min_zoom = float(config.get("refine_zoom_min", 0.25))
+    final = quantize_clip_edit(
+        ClipEditTransform(
+            zoom_x=max(min_zoom, min(max_zoom, state[0])),
+            zoom_y=max(min_zoom, min(max_zoom, state[0])),
+            pan=state[1],
+            tilt=state[2],
+            rotation_deg=state[3] if use_rot else 0.0,
+        ),
+        config,
+    )
+    rendered = _render_with_edit(online_raw, final, canvas_size, config)
+    return RefineOutcome(
+        edit=final,
+        ncc=ref.score(rendered),
+        used_position=used_position,
+        strategy=strategy,
+        gradient_ncc=ref.gradient_ncc(rendered),
+    )
+
+
+def _make_edit_cost(
+    online_raw: np.ndarray,
+    canvas_size: tuple[int, int],
+    config: AppConfig,
+    ref: _Reference,
+) -> Callable[[float, float, float, float], float]:
+    """Bounded picture-error cost over (zoom, pan, tilt, rotation)."""
+    width, height = int(canvas_size[0]), int(canvas_size[1])
 
     def cost_full(z: float, px: float, py: float, rd: float) -> float:
         max_zoom = float(config.get("refine_zoom_max", 4.0))
@@ -417,120 +565,94 @@ def _refine_at_canvas(
         except Exception:
             return 1e12
 
-    if use_multi_strategy_refine(config):
-        outcome = refine_multi_strategy(
-            online_raw=online_raw,
-            offline_fit=offline_fit,
-            canvas_size=canvas_size,
-            config=config,
-            initial=initial,
-            cost_fn=lambda p: cost_full(p[0], p[1], p[2], p[3]),
-            score_fn=ref.score,
-            should_cancel=should_cancel,
+    return cost_full
+
+
+def _config_steps(config: AppConfig, key: str, default: list[Any]) -> list[Any]:
+    """Step schedule from config, falling back to the tuned default."""
+    steps = config.get(key)
+    return steps if isinstance(steps, list) else default
+
+
+def _descend_priority_zoom(
+    online_raw: np.ndarray,
+    canvas_size: tuple[int, int],
+    config: AppConfig,
+    ref: _Reference,
+    initial: ClipEditTransform,
+    warp: np.ndarray | None,
+    cost_full: Callable[[float, float, float, float], float],
+    zoom_steps: list[Any],
+    pan_steps: list[Any],
+    rot_steps: list[Any],
+    use_rot: bool,
+) -> tuple[list[float], bool]:
+    """Zoom-first descent; position (and optional rotation) only when justified."""
+    state = [float(initial.zoom_x), 0.0, 0.0, 0.0]
+    for z_step in zoom_steps:
+        state = _coordinate_descent(
+            state,
+            lambda p: cost_full(p[0], p[1], p[2], p[3]),
+            deltas=[z_step, 0.0, 0.0, 0.0],
         )
-        outcome.gradient_ncc = ref.gradient_ncc(
-            _render_with_edit(online_raw, outcome.edit, canvas_size, config)
+    zoom_edit = ClipEditTransform(
+        zoom_x=state[0], zoom_y=state[0], pan=0.0, tilt=0.0, rotation_deg=0.0
+    )
+    ncc_z = ref.score(_render_with_edit(online_raw, zoom_edit, canvas_size, config))
+
+    if not should_refine_position(
+        config=config,
+        initial=initial,
+        warp=warp,
+        timeline_size=canvas_size,
+        ncc_after_zoom=ncc_z,
+    ):
+        return state, False
+
+    state[1] = float(initial.pan)
+    state[2] = float(initial.tilt)
+    for p_step in pan_steps:
+        state = _coordinate_descent(
+            state,
+            lambda p: cost_full(p[0], p[1], p[2], p[3]),
+            deltas=[0.0, p_step, p_step, 0.0],
         )
-        return outcome
-
-    zoom = float(initial.zoom_x)
-    pan = float(initial.pan)
-    tilt = float(initial.tilt)
-    rot = float(initial.rotation_deg)
-
-    max_zoom = float(config.get("refine_zoom_max", 4.0))
-    min_zoom = float(config.get("refine_zoom_min", 0.25))
-    use_rot = not bool(config.get("lock_alignment_rotation", False))
-
-    zoom_steps = config.get("refine_zoom_steps")
-    if not isinstance(zoom_steps, list):
-        zoom_steps = [0.03, 0.01, 0.002, 0.0005]
-    pan_steps = config.get("refine_pan_steps")
-    if not isinstance(pan_steps, list):
-        pan_steps = [4.0, 1.0, 0.25]
-    rot_steps = config.get("refine_rotation_steps")
-    if not isinstance(rot_steps, list):
-        rot_steps = [0.2, 0.05]
-
-    priority_zoom = edit_priority_zoom(config)
-
-    used_position = False
-    strategy = "legacy"
-    if priority_zoom:
-        state = [zoom, 0.0, 0.0, 0.0]
-        for z_step in zoom_steps:
+    if use_rot and bool(config.get("refine_rotation_after_zoom", False)):
+        for r_step in rot_steps:
             state = _coordinate_descent(
                 state,
                 lambda p: cost_full(p[0], p[1], p[2], p[3]),
-                deltas=[z_step, 0.0, 0.0, 0.0],
+                deltas=[0.0, 0.0, 0.0, r_step],
             )
-        zoom_edit = ClipEditTransform(
-            zoom_x=state[0],
-            zoom_y=state[0],
-            pan=0.0,
-            tilt=0.0,
-            rotation_deg=0.0,
+    return state, True
+
+
+def _descend_all_params(
+    initial: ClipEditTransform,
+    cost_full: Callable[[float, float, float, float], float],
+    zoom_steps: list[Any],
+    pan_steps: list[Any],
+    rot_steps: list[Any],
+    use_rot: bool,
+) -> list[float]:
+    """Joint descent over all parameters (legacy-all strategy)."""
+    state = [
+        float(initial.zoom_x),
+        float(initial.pan),
+        float(initial.tilt),
+        float(initial.rotation_deg),
+    ]
+    pad = max(len(zoom_steps), len(pan_steps), len(rot_steps))
+    z_steps = zoom_steps + [zoom_steps[-1]] * (pad - len(zoom_steps))
+    p_steps = pan_steps + [pan_steps[-1]] * (pad - len(pan_steps))
+    r_steps = rot_steps + [rot_steps[-1]] * (pad - len(rot_steps))
+    for z_step, p_step, r_step in zip(z_steps, p_steps, r_steps, strict=True):
+        state = _coordinate_descent(
+            state,
+            lambda p: cost_full(p[0], p[1], p[2], p[3]),
+            deltas=[z_step, p_step, p_step, r_step if use_rot else 0.0],
         )
-        rendered_z = _render_with_edit(online_raw, zoom_edit, canvas_size, config)
-        ncc_z = ref.score(rendered_z)
-
-        if should_refine_position(
-            config=config,
-            initial=initial,
-            warp=warp,
-            timeline_size=canvas_size,
-            ncc_after_zoom=ncc_z,
-        ):
-            used_position = True
-            state[1] = float(initial.pan)
-            state[2] = float(initial.tilt)
-            for p_step in pan_steps:
-                state = _coordinate_descent(
-                    state,
-                    lambda p: cost_full(p[0], p[1], p[2], p[3]),
-                    deltas=[0.0, p_step, p_step, 0.0],
-                )
-            if use_rot and bool(config.get("refine_rotation_after_zoom", False)):
-                for r_step in rot_steps:
-                    state = _coordinate_descent(
-                        state,
-                        lambda p: cost_full(p[0], p[1], p[2], p[3]),
-                        deltas=[0.0, 0.0, 0.0, r_step],
-                    )
-    else:
-        used_position = True
-        strategy = "legacy-all"
-        state = [zoom, pan, tilt, rot]
-        pad = max(len(zoom_steps), len(pan_steps), len(rot_steps))
-        z_steps = zoom_steps + [zoom_steps[-1]] * (pad - len(zoom_steps))
-        p_steps = pan_steps + [pan_steps[-1]] * (pad - len(pan_steps))
-        r_steps = rot_steps + [rot_steps[-1]] * (pad - len(rot_steps))
-        for z_step, p_step, r_step in zip(z_steps, p_steps, r_steps, strict=True):
-            state = _coordinate_descent(
-                state,
-                lambda p: cost_full(p[0], p[1], p[2], p[3]),
-                deltas=[z_step, p_step, p_step, r_step if use_rot else 0.0],
-            )
-
-    final = quantize_clip_edit(
-        ClipEditTransform(
-            zoom_x=max(min_zoom, min(max_zoom, state[0])),
-            zoom_y=max(min_zoom, min(max_zoom, state[0])),
-            pan=state[1],
-            tilt=state[2],
-            rotation_deg=state[3] if use_rot else 0.0,
-        ),
-        config,
-    )
-    rendered = _render_with_edit(online_raw, final, canvas_size, config)
-    score = ref.score(rendered)
-    return RefineOutcome(
-        edit=final,
-        ncc=score,
-        used_position=used_position,
-        strategy=strategy,
-        gradient_ncc=ref.gradient_ncc(rendered),
-    )
+    return state
 
 
 def _coordinate_descent(
