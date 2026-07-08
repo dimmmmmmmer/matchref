@@ -388,11 +388,8 @@ class TransformAnalyzer:
     def _resolve_sample_mapping(
         self, ctx: _ClipContext, point: Any, local_frame: int
     ) -> tuple[Any, Any, int]:
-        """Map a clip-local frame to its offline counterpart and clamp the source.
-
-        Returns (source_info, offline_mapping, clamped_source_frame); clamping is
-        warned on the clip result because it means the conform points past the media.
-        """
+        """Return (source_info, offline_mapping, clamped_source_frame) for a clip-local frame."""
+        # Clamping is warned on the clip result: it means the conform points past the media.
         src = build_clip_source_info(
             ctx.timeline_item, local_frame, ctx.result.clip_name, config=self.config
         )
@@ -413,12 +410,9 @@ class TransformAnalyzer:
     def _decode_online_frame(
         self, ctx: _ClipContext, clamped_src: int
     ) -> tuple[Any, Any, bool, bool]:
-        """Decode the online frame and pre-shape it for matching.
-
-        Absolute edit match fits the raw frame to the canvas; otherwise the clip's
-        baseline Edit transform is simulated onto it when in range. Returns
-        (online, online_raw, compensate, absolute).
-        """
+        """Decode + pre-shape the online frame; returns (online, online_raw, compensate, absolute)."""
+        # Absolute edit match fits the raw frame to the canvas; otherwise the clip's
+        # baseline Edit transform is simulated onto it when in range.
         online_raw = self.frames.get_online_frame(ctx.media_path, clamped_src)
         absolute = is_absolute_edit_match(self.config)
         compensate = (
