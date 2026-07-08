@@ -178,6 +178,18 @@ class TransformAnalyzer:
             logger=self.logger,
         )
 
+        self._configure_lock_cut_origin(clips, offline_frames)
+
+        self._debug_dir = resolve_debug_dir(self.config)
+        if self._debug_dir:
+            self.logger.info("Debug frames → %s", self._debug_dir)
+
+        self._batch_ready = True
+        self.logger.info("Batch: %d clips (%d skipped)", len(clips), len(skipped))
+        return clips, skipped
+
+    def _configure_lock_cut_origin(self, clips: list[Any], offline_frames: int) -> None:
+        """Locate the lock-cut origin on the hub timeline; warn on short reference coverage."""
         timeline = None
         if self.resolve is not None:
             try:
@@ -207,14 +219,6 @@ class TransformAnalyzer:
         coverage_warning = reference_coverage_warning(offline_frames, span, self.timeline_ctx.fps)
         if coverage_warning:
             self.logger.warning(coverage_warning)
-
-        self._debug_dir = resolve_debug_dir(self.config)
-        if self._debug_dir:
-            self.logger.info("Debug frames → %s", self._debug_dir)
-
-        self._batch_ready = True
-        self.logger.info("Batch: %d clips (%d skipped)", len(clips), len(skipped))
-        return clips, skipped
 
     def analyze_one(
         self,
@@ -250,16 +254,14 @@ class TransformAnalyzer:
         self._finalize_clip(ctx)
         return ctx.result
 
-    def _begin_clip(self, timeline_item: Any) -> _ClipContext | None:
-        """Validate the clip and build the loop-invariant analysis context."""
-        sample_n = self._sample_n
+    def _clip_media_path(self, timeline_item: Any) -> str | None:
+        """Media path for a video timeline item; None means skip the clip."""
         try:
             track_type, _ = timeline_item.GetTrackTypeAndIndex()
             if track_type != "video":
                 return None
         except Exception:
             pass
-
         media_item = None
         try:
             media_item = timeline_item.GetMediaPoolItem()
@@ -269,12 +271,12 @@ class TransformAnalyzer:
         if not media_path:
             self.logger.warning("Skipping clip without media path.")
             return None
+        return media_path
 
-        from matchref.resolve_api import timeline_item_info
-
-        meta = timeline_item_info(timeline_item)
-        baseline = read_clip_edit_transform(timeline_item)
-        result = ClipAnalysisResult(
+    @staticmethod
+    def _make_clip_result(timeline_item: Any, meta: Any, baseline: Any) -> ClipAnalysisResult:
+        """Seed the per-clip result record with identity and baseline Edit values."""
+        return ClipAnalysisResult(
             clip_name=meta["name"],
             timeline_item_id=meta["unique_id"],
             track_type=meta["track_type"],
@@ -287,13 +289,9 @@ class TransformAnalyzer:
             baseline_tilt=baseline.tilt,
             baseline_rotation=baseline.rotation_deg,
         )
-        self.logger.info(
-            "Clip baseline Edit: Zoom=%.3f Pan=%.1f Tilt=%.1f Rot=%.1f",
-            baseline.zoom_x,
-            baseline.pan,
-            baseline.tilt,
-            baseline.rotation_deg,
-        )
+
+    def _log_match_mode(self) -> None:
+        """Log whether matching runs absolute (vs lock-cut) or delta (composed on baseline)."""
         if is_absolute_edit_match(self.config):
             zoom_note = (
                 "zoom-first, pan/tilt≈0"
@@ -308,8 +306,9 @@ class TransformAnalyzer:
             self.logger.info(
                 "Match mode: delta — compare includes current Edit; result composes on baseline."
             )
-        canvas_size = self._timeline_canvas_size()
 
+    def _warn_clip_durations(self, result: ClipAnalysisResult, meta: Any, media_path: str) -> None:
+        """Warn on suspiciously long clips and timeline durations exceeding the media."""
         max_duration = int(self.config.get("max_clip_duration_frames", 0))
         if max_duration > 0 and meta["duration"] > max_duration:
             self.logger.warning(
@@ -332,20 +331,24 @@ class TransformAnalyzer:
                 f"timeline {meta['duration']}f longer than media file ({media_frames}f)"
             )
 
-        control_points = sample_points_for_clip(meta["duration"], sample_n, config=self.config)
+    def _ordered_control_points(self, duration: int, stop_on_confident: bool) -> list[Any]:
+        """Sample points for the clip; MID first when a confident hit can stop early."""
+        control_points = sample_points_for_clip(duration, self._sample_n, config=self.config)
         # When we only keep the single best sample (apply_transform_select="best"),
         # refining every sample is wasted work: try the mid frame first (most
         # representative of a shot) so a confident match lets us stop early.
-        stop_on_confident = str(
-            self.config.get("apply_transform_select", "best")
-        ).lower() == "best" and bool(self.config.get("refine_stop_on_confident_sample", True))
-        confident_score = float(self.config.get("confident_sample_score", 0.96))
-        min_scale_apply = float(self.config.get("min_alignment_scale", 0.4))
-        max_scale_apply = float(self.config.get("max_alignment_scale", 2.5))
         if stop_on_confident and len(control_points) > 1:
             control_points = sorted(
                 control_points, key=lambda cp: 0 if cp[0] == SamplePoint.MID else 1
             )
+        return control_points
+
+    def _match_base_values(self) -> tuple[float, tuple[float, float], float]:
+        """Loop-invariant match base (scale, center, angle); identity in absolute mode."""
+        # Match base values are loop-invariant (config only); hoist so both the
+        # accept path and the ECC-consensus rescue derive transforms identically.
+        if is_absolute_edit_match(self.config):
+            return 1.0, (0.0, 0.0), 0.0
         base_scale = float(
             self.config.get("transform_base_scale", self.config.get("fusion_base_size", 1.0))
         )
@@ -357,29 +360,45 @@ class TransformAnalyzer:
         base_angle = float(
             self.config.get("transform_base_angle", self.config.get("fusion_base_angle", 0.0))
         )
+        return base_scale, (float(base_center[0]), float(base_center[1])), base_angle
 
-        # Match base values are loop-invariant (config only); hoist so both the
-        # accept path and the ECC-consensus rescue derive transforms identically.
-        if is_absolute_edit_match(self.config):
-            match_base_scale = 1.0
-            match_base_center = (0.0, 0.0)
-            match_base_angle = 0.0
-        else:
-            match_base_scale = base_scale
-            match_base_center = (float(base_center[0]), float(base_center[1]))
-            match_base_angle = base_angle
+    def _begin_clip(self, timeline_item: Any) -> _ClipContext | None:
+        """Validate the clip and build the loop-invariant analysis context."""
+        media_path = self._clip_media_path(timeline_item)
+        if media_path is None:
+            return None
+
+        from matchref.resolve_api import timeline_item_info
+
+        meta = timeline_item_info(timeline_item)
+        baseline = read_clip_edit_transform(timeline_item)
+        result = self._make_clip_result(timeline_item, meta, baseline)
+        self.logger.info(
+            "Clip baseline Edit: Zoom=%.3f Pan=%.1f Tilt=%.1f Rot=%.1f",
+            baseline.zoom_x,
+            baseline.pan,
+            baseline.tilt,
+            baseline.rotation_deg,
+        )
+        self._log_match_mode()
+        self._warn_clip_durations(result, meta, media_path)
+
+        stop_on_confident = str(
+            self.config.get("apply_transform_select", "best")
+        ).lower() == "best" and bool(self.config.get("refine_stop_on_confident_sample", True))
+        match_base_scale, match_base_center, match_base_angle = self._match_base_values()
 
         return _ClipContext(
             timeline_item=timeline_item,
             result=result,
             baseline=baseline,
             media_path=media_path,
-            canvas_size=canvas_size,
-            control_points=control_points,
+            canvas_size=self._timeline_canvas_size(),
+            control_points=self._ordered_control_points(meta["duration"], stop_on_confident),
             stop_on_confident=stop_on_confident,
-            confident_score=confident_score,
-            min_scale_apply=min_scale_apply,
-            max_scale_apply=max_scale_apply,
+            confident_score=float(self.config.get("confident_sample_score", 0.96)),
+            min_scale_apply=float(self.config.get("min_alignment_scale", 0.4)),
+            max_scale_apply=float(self.config.get("max_alignment_scale", 2.5)),
             match_base_scale=match_base_scale,
             match_base_center=match_base_center,
             match_base_angle=match_base_angle,
@@ -567,97 +586,65 @@ class TransformAnalyzer:
             absolute=absolute,
         )
 
-    def _process_sample(
+    def _record_sample_reject(
         self,
         ctx: _ClipContext,
         point: Any,
-        local_frame: int,
-        should_cancel: Callable[[], bool] | None = None,
+        loaded: _SampleFrames,
+        alignment: Any,
+        admit: float,
+        apply_floor: float,
+        message: str,
+        warning: str,
     ) -> TransformSample:
-        """Match one sample frame; populate it and append to the clip context."""
-        result = ctx.result
-        baseline = ctx.baseline
-        media_path = ctx.media_path
-        match_base_scale = ctx.match_base_scale
-        match_base_center = ctx.match_base_center
-        match_base_angle = ctx.match_base_angle
-        min_scale_apply = ctx.min_scale_apply
-        max_scale_apply = ctx.max_scale_apply
-        transform_vectors = ctx.transform_vectors
-        ecc_candidates = ctx.ecc_candidates
-
-        loaded = self._load_sample(ctx, point, local_frame)
+        """Append a rejected sample with its warning and debug bundle."""
         sample = loaded.sample
-        if loaded.terminal:
-            return sample
-        online = loaded.online
-        offline = loaded.offline
-        online_raw = loaded.online_raw
-        compensate = loaded.compensate
-        mapping = loaded.mapping
-        compare_line = loaded.compare_line
-        clamped_src = loaded.clamped_src
-        absolute = loaded.absolute
+        sample.message = message
+        ctx.result.samples.append(sample)
+        ctx.result.warnings.append(f"{point.value}: {warning}")
+        self._save_match_debug(ctx, point, loaded, alignment, admit, apply_floor)
+        return sample
 
-        alignment = self._align_with_neighbors(
-            online,
-            offline,
-            media_path,
-            clamped_src,
-            mapping,
-            online_raw=online_raw,
-            offline_full=offline,
-            baseline=baseline,
-        )
-        sample.ecc_score = alignment.ecc_score
-        admit = alignment_admission_threshold(alignment, self.config)
-        apply_floor = float(self.config.get("min_match_score", 0.95))
+    def _passes_admission(
+        self,
+        ctx: _ClipContext,
+        point: Any,
+        loaded: _SampleFrames,
+        alignment: Any,
+        admit: float,
+        apply_floor: float,
+        can_refine: bool,
+    ) -> bool:
+        """Gate on the ECC admission score; a refine-worthy near-miss may proceed."""
+        if alignment.ecc_score >= admit:
+            return True
         min_refine_ecc = min_ecc_for_refine_attempt(self.config)
-        canvas = self._timeline_canvas_size()
-        can_refine = (
-            bool(self.config.get("resolve_edit_refine", True))
-            and is_maximum_precision(self.config)
-            and online_raw is not None
+        if can_refine and alignment.ecc_score >= min_refine_ecc:
+            self.logger.info(
+                "[%s %s] ECC %.4f < admit %.2f — trying Resolve Edit refine",
+                ctx.result.clip_name,
+                point.value,
+                alignment.ecc_score,
+                admit,
+            )
+            return True
+        self._record_sample_reject(
+            ctx,
+            point,
+            loaded,
+            alignment,
+            admit,
+            apply_floor,
+            message=f"score below admission ({alignment.ecc_score:.4f} < {admit:.2f})",
+            warning=(
+                f"ECC {alignment.ecc_score:.4f} < {admit:.2f} "
+                f"(refine needs >= {min_refine_ecc:.2f}, apply {apply_floor:.2f})"
+            ),
         )
+        return False
 
-        if not alignment.ok:
-            sample.message = alignment.message
-            result.samples.append(sample)
-            result.warnings.append(f"{point.value}: match failed ({alignment.message})")
-            return sample
-
-        if alignment.ecc_score < admit:
-            if can_refine and alignment.ecc_score >= min_refine_ecc:
-                self.logger.info(
-                    "[%s %s] ECC %.4f < admit %.2f — trying Resolve Edit refine",
-                    result.clip_name,
-                    point.value,
-                    alignment.ecc_score,
-                    admit,
-                )
-            else:
-                sample.message = f"score below admission ({alignment.ecc_score:.4f} < {admit:.2f})"
-                result.samples.append(sample)
-                result.warnings.append(
-                    f"{point.value}: ECC {alignment.ecc_score:.4f} < {admit:.2f} "
-                    f"(refine needs >= {min_refine_ecc:.2f}, apply {apply_floor:.2f})"
-                )
-                self._save_match_debug(
-                    result,
-                    point,
-                    sample,
-                    online,
-                    offline,
-                    online_raw,
-                    compensate,
-                    mapping,
-                    compare_line,
-                    alignment,
-                    admit,
-                    apply_floor,
-                )
-                return sample
-
+    def _timeline_warp(self, alignment: Any) -> Any:
+        """Alignment warp rescaled from analysis resolution to the timeline canvas."""
         warp = alignment.warp_matrix
         if warp is not None and alignment.analysis_width > 0:
             warp = warp_analysis_to_timeline(
@@ -665,106 +652,131 @@ class TransformAnalyzer:
                 (alignment.analysis_height, alignment.analysis_width),
                 self._timeline_canvas_size(),
             )
-        sample.warp_matrix = warp
+        return warp
 
-        skip_refine = refine_early_exit_enabled(self.config) and sample_score_passes(
-            alignment.ecc_score, self.config
+    def _refine_skipped_by_score(self, ctx: _ClipContext, point: Any, alignment: Any) -> bool:
+        """True when the ECC score alone clears the early-exit threshold (no refine needed)."""
+        if not (
+            refine_early_exit_enabled(self.config)
+            and sample_score_passes(alignment.ecc_score, self.config)
+        ):
+            return False
+        self.logger.info(
+            "[%s %s] ECC %.4f >= threshold — skip Resolve Edit refine",
+            ctx.result.clip_name,
+            point.value,
+            alignment.ecc_score,
         )
-        if skip_refine:
-            self.logger.info(
-                "[%s %s] ECC %.4f >= threshold — skip Resolve Edit refine",
-                result.clip_name,
-                point.value,
-                alignment.ecc_score,
-            )
-        refine_outcome = None
-        if can_refine and warp is not None and not skip_refine:
-            assert online_raw is not None  # can_refine implies online_raw is not None
-            bl = None if absolute else baseline
-            guess = initial_edit_from_warp(warp, canvas, self.config, bl)
-            refine_outcome = refine_resolve_edit(
-                online_raw,
-                offline,
-                canvas_size=canvas,
-                config=self.config,
-                initial=guess,
-                warp=warp,
-                should_cancel=should_cancel,
-            )
-            sample.refined_edit = refine_outcome.edit
-            sample.ecc_score = score_from_refine_ncc(refine_outcome.ncc)
-            pos_note = "+position" if refine_outcome.used_position else ""
-            rot_note = (
-                ""
-                if abs(refine_outcome.edit.rotation_deg) < 0.05
-                else f" rot={refine_outcome.edit.rotation_deg:.2f}"
-            )
-            self.logger.info(
-                "[%s %s] Resolve Edit refine [%s]%s: zoom=%.4f pan=%.1f tilt=%.1f%s ncc=%.4f",
-                result.clip_name,
-                point.value,
-                refine_outcome.strategy,
-                pos_note,
-                refine_outcome.edit.zoom_x,
-                refine_outcome.edit.pan,
-                refine_outcome.edit.tilt,
-                rot_note,
-                refine_outcome.ncc,
-            )
-            refine_ok, reasons, accept_via = sample_refine_accepted(
-                ncc=refine_outcome.ncc,
-                gradient_ncc=refine_outcome.gradient_ncc,
-                edit=refine_outcome.edit,
-                ecc_scale=alignment.scale,
-                timeline_size=canvas,
-                config=self.config,
-            )
-            if refine_ok:
-                sample.accept_via = accept_via
-            if not refine_ok:
-                sample.message = "refine rejected: " + "; ".join(reasons)
-                # The refine wandered, but the direct ECC alignment may still be
-                # right (common on low-structure smoke/sky). Stash its geometry so
-                # cross-sample consensus can rescue the clip; drop the bad refined
-                # edit so apply falls back to the ECC warp, not the wandered zoom.
-                ecc_scale, ecc_px, ecc_py, ecc_ang = apply_match_flags(
-                    alignment,
-                    self.config,
-                    base_scale=match_base_scale,
-                    base_center=match_base_center,
-                    base_angle=match_base_angle,
-                )
-                if min_scale_apply <= float(ecc_scale) <= max_scale_apply:
-                    sample.refined_edit = None
-                    sample.scale = ecc_scale
-                    sample.position_x = ecc_px
-                    sample.position_y = ecc_py
-                    sample.rotation_deg = ecc_ang
-                    ecc_candidates.append(sample)
-                result.samples.append(sample)
-                result.warnings.append(f"{point.value}: {sample.message}")
-                self._save_match_debug(
-                    result,
-                    point,
-                    sample,
-                    online,
-                    offline,
-                    online_raw,
-                    compensate,
-                    mapping,
-                    compare_line,
-                    alignment,
-                    admit,
-                    apply_floor,
-                )
-                return sample
+        return True
 
+    def _run_refine(
+        self,
+        ctx: _ClipContext,
+        point: Any,
+        loaded: _SampleFrames,
+        warp: Any,
+        should_cancel: Callable[[], bool] | None,
+    ) -> Any:
+        """Run the Resolve Edit refine for a sample; sets its edit/score and logs the outcome."""
+        sample = loaded.sample
+        canvas = self._timeline_canvas_size()
+        bl = None if loaded.absolute else ctx.baseline
+        guess = initial_edit_from_warp(warp, canvas, self.config, bl)
+        refine_outcome = refine_resolve_edit(
+            loaded.online_raw,
+            loaded.offline,
+            canvas_size=canvas,
+            config=self.config,
+            initial=guess,
+            warp=warp,
+            should_cancel=should_cancel,
+        )
+        sample.refined_edit = refine_outcome.edit
+        sample.ecc_score = score_from_refine_ncc(refine_outcome.ncc)
+        pos_note = "+position" if refine_outcome.used_position else ""
+        rot_note = (
+            ""
+            if abs(refine_outcome.edit.rotation_deg) < 0.05
+            else f" rot={refine_outcome.edit.rotation_deg:.2f}"
+        )
+        self.logger.info(
+            "[%s %s] Resolve Edit refine [%s]%s: zoom=%.4f pan=%.1f tilt=%.1f%s ncc=%.4f",
+            ctx.result.clip_name,
+            point.value,
+            refine_outcome.strategy,
+            pos_note,
+            refine_outcome.edit.zoom_x,
+            refine_outcome.edit.pan,
+            refine_outcome.edit.tilt,
+            rot_note,
+            refine_outcome.ncc,
+        )
+        return refine_outcome
+
+    def _stash_ecc_candidate(
+        self, ctx: _ClipContext, sample: TransformSample, alignment: Any
+    ) -> None:
+        """Keep a refine-rejected sample's plausible direct-ECC geometry for consensus rescue."""
+        # The refine wandered, but the direct ECC alignment may still be
+        # right (common on low-structure smoke/sky). Stash its geometry so
+        # cross-sample consensus can rescue the clip; drop the bad refined
+        # edit so apply falls back to the ECC warp, not the wandered zoom.
+        ecc_scale, ecc_px, ecc_py, ecc_ang = apply_match_flags(
+            alignment,
+            self.config,
+            base_scale=ctx.match_base_scale,
+            base_center=ctx.match_base_center,
+            base_angle=ctx.match_base_angle,
+        )
+        if ctx.min_scale_apply <= float(ecc_scale) <= ctx.max_scale_apply:
+            sample.refined_edit = None
+            sample.scale = ecc_scale
+            sample.position_x = ecc_px
+            sample.position_y = ecc_py
+            sample.rotation_deg = ecc_ang
+            ctx.ecc_candidates.append(sample)
+
+    def _refine_sample(
+        self,
+        ctx: _ClipContext,
+        point: Any,
+        loaded: _SampleFrames,
+        alignment: Any,
+        warp: Any,
+        admit: float,
+        apply_floor: float,
+        should_cancel: Callable[[], bool] | None,
+    ) -> TransformSample | None:
+        """Refine to Edit parameters; returns the recorded sample on rejection, None when accepted."""
+        refine_outcome = self._run_refine(ctx, point, loaded, warp, should_cancel)
+        refine_ok, reasons, accept_via = sample_refine_accepted(
+            ncc=refine_outcome.ncc,
+            gradient_ncc=refine_outcome.gradient_ncc,
+            edit=refine_outcome.edit,
+            ecc_scale=alignment.scale,
+            timeline_size=self._timeline_canvas_size(),
+            config=self.config,
+        )
+        if refine_ok:
+            loaded.sample.accept_via = accept_via
+            return None
+        self._stash_ecc_candidate(ctx, loaded.sample, alignment)
+        message = "refine rejected: " + "; ".join(reasons)
+        return self._record_sample_reject(
+            ctx, point, loaded, alignment, admit, apply_floor, message=message, warning=message
+        )
+
+    def _accept_sample(
+        self, ctx: _ClipContext, point: Any, loaded: _SampleFrames, alignment: Any
+    ) -> None:
+        """Mark the sample ok, derive its apply geometry, and record it on the clip."""
+        sample = loaded.sample
         scale, pos_x, pos_y, angle = apply_match_flags(
             alignment,
             self.config,
-            base_scale=match_base_scale,
-            base_center=match_base_center,
-            base_angle=match_base_angle,
+            base_scale=ctx.match_base_scale,
+            base_center=ctx.match_base_center,
+            base_angle=ctx.match_base_angle,
         )
         sample.scale = scale
         sample.position_x = pos_x
@@ -778,25 +790,77 @@ class TransformAnalyzer:
         if bool(self.config.get("perspective_match_enabled", False)):
             from matchref.perspective import solve_homography
 
-            sample.homography = solve_homography(online, offline, self.config, timeline_size=canvas)
-        transform_vectors.append((scale, pos_x, pos_y, angle))
-        result.samples.append(sample)
-        log_sample(self.logger, result.clip_name, sample)
+            sample.homography = solve_homography(
+                loaded.online,
+                loaded.offline,
+                self.config,
+                timeline_size=self._timeline_canvas_size(),
+            )
+        ctx.transform_vectors.append((scale, pos_x, pos_y, angle))
+        ctx.result.samples.append(sample)
+        log_sample(self.logger, ctx.result.clip_name, sample)
 
-        self._save_match_debug(
-            result,
-            point,
-            sample,
-            online,
-            offline,
-            online_raw,
-            compensate,
-            mapping,
-            compare_line,
-            alignment,
-            admit,
-            apply_floor,
+    def _align_sample(self, ctx: _ClipContext, loaded: _SampleFrames) -> Any:
+        """Align the sample's online/offline pair (with neighbor-frame search)."""
+        return self._align_with_neighbors(
+            loaded.online,
+            loaded.offline,
+            ctx.media_path,
+            loaded.clamped_src,
+            loaded.mapping,
+            online_raw=loaded.online_raw,
+            offline_full=loaded.offline,
+            baseline=ctx.baseline,
         )
+
+    def _process_sample(
+        self,
+        ctx: _ClipContext,
+        point: Any,
+        local_frame: int,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> TransformSample:
+        """Match one sample frame; populate it and append to the clip context."""
+        loaded = self._load_sample(ctx, point, local_frame)
+        sample = loaded.sample
+        if loaded.terminal:
+            return sample
+
+        alignment = self._align_sample(ctx, loaded)
+        sample.ecc_score = alignment.ecc_score
+        admit = alignment_admission_threshold(alignment, self.config)
+        apply_floor = float(self.config.get("min_match_score", 0.95))
+        can_refine = (
+            bool(self.config.get("resolve_edit_refine", True))
+            and is_maximum_precision(self.config)
+            and loaded.online_raw is not None
+        )
+
+        if not alignment.ok:
+            sample.message = alignment.message
+            ctx.result.samples.append(sample)
+            ctx.result.warnings.append(f"{point.value}: match failed ({alignment.message})")
+            return sample
+
+        if not self._passes_admission(
+            ctx, point, loaded, alignment, admit, apply_floor, can_refine
+        ):
+            return sample
+
+        warp = self._timeline_warp(alignment)
+        sample.warp_matrix = warp
+
+        skip_refine = self._refine_skipped_by_score(ctx, point, alignment)
+        if can_refine and warp is not None and not skip_refine:
+            assert loaded.online_raw is not None  # can_refine implies online_raw is not None
+            rejected = self._refine_sample(
+                ctx, point, loaded, alignment, warp, admit, apply_floor, should_cancel
+            )
+            if rejected is not None:
+                return rejected
+
+        self._accept_sample(ctx, point, loaded, alignment)
+        self._save_match_debug(ctx, point, loaded, alignment, admit, apply_floor)
         return sample
 
     def _should_stop_after(self, ctx: _ClipContext, sample: TransformSample) -> bool:
@@ -840,123 +904,142 @@ class TransformAnalyzer:
         )
         return False
 
+    def _consensus_rescued(self, ctx: _ClipContext) -> list[TransformSample]:
+        """ECC-consensus rescue for clips where no sample passed; returns [rep] or []."""
+        # Low-structure shots (smoke, fire, flat sky) can fail every per-sample
+        # refine (the search wanders, the structure gate trips) yet have a correct,
+        # stable ECC zoom across independent frames. When ≥2 rejected samples agree
+        # on a plausible ECC zoom — and the best of them clears the geometry-trust
+        # floor — trust that geometry and apply it.
+        ecc_candidates = ctx.ecc_candidates
+        if not (ecc_candidates and bool(self.config.get("ecc_consensus_rescue", True))):
+            return []
+        scales = [float(s.scale) for s in ecc_candidates]
+        rep = max(ecc_candidates, key=lambda s: float(s.ecc_score))
+        if not ecc_consensus_passes(scales, float(rep.ecc_score), self.config):
+            return []
+        lo, hi = min(scales), max(scales)
+        rep.ok = True
+        rep.accept_via = "consensus"
+        rep.message = (
+            f"ECC-consensus rescue: {len(ecc_candidates)} samples agree on "
+            f"zoom {lo:.3f}…{hi:.3f} (refine/structure unreliable on low-structure content)"
+        )
+        ctx.result.warnings.append(rep.message)
+        self.logger.info("Quality check: %s — %s", ctx.result.clip_name, rep.message)
+        return [rep]
+
+    def _best_select_problems(
+        self, ctx: _ClipContext, ok_samples: list[TransformSample], best: TransformSample
+    ) -> tuple[list[str], bool]:
+        """Validate the best sample's scale and classify motion; returns (reasons, animated)."""
+        min_scale = float(self.config.get("min_alignment_scale", 0.4))
+        max_scale = float(self.config.get("max_alignment_scale", 2.5))
+        reasons: list[str] = []
+        if not (min_scale <= best.scale <= max_scale):
+            reasons.append(f"best sample scale {best.scale:.3f} outside [{min_scale}, {max_scale}]")
+        # Samples may differ across the clip because the reframe is *keyframed*
+        # (a smooth ramp) — that is a real animation to reproduce, not a fault.
+        # Distinguish it from erratic disagreement (a bad/ambiguous match).
+        animated = False
+        if len(ok_samples) >= 2:
+            varies, is_ramp = clip_motion_profile(ok_samples, self.config)
+            keyframes_enabled = bool(self.config.get("apply_keyframes_on_variance", True))
+            if varies and is_ramp and keyframes_enabled:
+                animated = True
+            else:
+                # Reject only a *large* erratic disagreement (a bad/ambiguous
+                # match). Small non-monotonic jitter is treated as static — the
+                # best sample is applied (handled below).
+                lo, hi, spread = scale_spread([s.scale for s in ok_samples])
+                if spread > max_scale_spread(self.config):
+                    reasons.append(
+                        f"samples disagree {lo:.3f}…{hi:.3f} (×{spread:.2f}), not a smooth ramp"
+                    )
+        return reasons, animated
+
+    def _log_best_outcome(
+        self, ctx: _ClipContext, best: TransformSample, ok_samples: list[TransformSample]
+    ) -> None:
+        """Log the best-sample decision; non-score acceptances get an eyeball-check warning."""
+        result = ctx.result
+        if result.animated:
+            self.logger.info(
+                "Animated reframe: %s — %d keyframes (%s)",
+                result.clip_name,
+                len(ok_samples),
+                ", ".join(
+                    f"{s.sample_point.value} z={s.scale:.3f}"
+                    for s in sorted(ok_samples, key=lambda s: s.clip_local_frame)
+                ),
+            )
+            return
+        via = best.accept_via or "score"
+        if via == "score":
+            self.logger.info(
+                "Best sample: %s score %.4f (of %d ok)",
+                best.sample_point.value,
+                best.ecc_score,
+                len(ok_samples),
+            )
+        else:
+            # Not a strict-score match — geometry trusted via corroboration or
+            # cross-sample consensus. Flag it so it gets an eyeball check.
+            note = f"accepted via {via} (verify difference.jpg / near-black%)"
+            result.warnings.append(note)
+            self.logger.warning(
+                "Best sample: %s score %.4f via %s — %s",
+                best.sample_point.value,
+                best.ecc_score,
+                via,
+                "geometry trusted, eyeball recommended",
+            )
+
+    def _finalize_best_select(self, ctx: _ClipContext, ok_samples: list[TransformSample]) -> None:
+        """Keep the single best-matching sample; validate only its scale (the
+        others may be weaker frames — we just don't use them). No keyframing."""
+        result = ctx.result
+        best = max(ok_samples, key=lambda s: s.ecc_score)
+        select_reasons, animated = self._best_select_problems(ctx, ok_samples, best)
+        result.problem = bool(select_reasons)
+        result.animated = animated and not result.problem
+        for msg in select_reasons:
+            result.warnings.append(msg)
+            self.logger.warning("Quality check: %s — %s", result.clip_name, msg)
+        if not result.problem:
+            self._log_best_outcome(ctx, best, ok_samples)
+        result.use_mid_key = False
+
+    def _finalize_multi_sample(self, ctx: _ClipContext, ok_samples: list[TransformSample]) -> None:
+        """Gate the clip on aggregate sample quality and pick the keyframing mode."""
+        result = ctx.result
+        passed, fail_reasons = assess_clip_match_quality(ok_samples, self.config)
+        result.problem = not passed
+        for reason in fail_reasons:
+            result.warnings.append(reason)
+            self.logger.warning("Quality check: %s — %s", result.clip_name, reason)
+        stable = transforms_are_stable(
+            [(s.scale, s.position_x, s.position_y, s.rotation_deg) for s in ok_samples],
+            self._variance_threshold,
+        )
+        use_mid = bool(self.config.get("use_midpoint_keyframe", True)) and not stable
+        result.use_mid_key = use_mid and any(s.sample_point == SamplePoint.MID for s in ok_samples)
+
     def _finalize_clip(self, ctx: _ClipContext) -> None:
         """Apply the clip-level decision (consensus rescue, best/quality gate)."""
         result = ctx.result
-        ecc_candidates = ctx.ecc_candidates
-        transform_vectors = ctx.transform_vectors
-        variance_threshold = self._variance_threshold
-
         ok_samples = [s for s in result.samples if s.ok]
-
-        # ECC-consensus rescue: low-structure shots (smoke, fire, flat sky) can fail
-        # every per-sample refine (the search wanders, the structure gate trips) yet
-        # have a correct, stable ECC zoom across independent frames. When no sample
-        # passed but ≥2 rejected samples agree on a plausible ECC zoom — and the best
-        # of them clears the geometry-trust floor — trust that geometry and apply it.
-        if (
-            not ok_samples
-            and ecc_candidates
-            and bool(self.config.get("ecc_consensus_rescue", True))
-        ):
-            scales = [float(s.scale) for s in ecc_candidates]
-            rep = max(ecc_candidates, key=lambda s: float(s.ecc_score))
-            if ecc_consensus_passes(scales, float(rep.ecc_score), self.config):
-                lo, hi = min(scales), max(scales)
-                rep.ok = True
-                rep.accept_via = "consensus"
-                rep.message = (
-                    f"ECC-consensus rescue: {len(ecc_candidates)} samples agree on "
-                    f"zoom {lo:.3f}…{hi:.3f} (refine/structure unreliable on low-structure content)"
-                )
-                ok_samples = [rep]
-                result.warnings.append(rep.message)
-                self.logger.info("Quality check: %s — %s", result.clip_name, rep.message)
+        if not ok_samples:
+            ok_samples = self._consensus_rescued(ctx)
         min_ok = self._min_ok_samples_required()
         select_best = str(self.config.get("apply_transform_select", "best")).lower() == "best"
         if ok_samples and select_best:
-            # Keep the single best-matching sample; validate only its scale (the
-            # others may be weaker frames — we just don't use them). No keyframing.
-            best = max(ok_samples, key=lambda s: s.ecc_score)
-            min_scale = float(self.config.get("min_alignment_scale", 0.4))
-            max_scale = float(self.config.get("max_alignment_scale", 2.5))
-            select_reasons: list[str] = []
-            if not (min_scale <= best.scale <= max_scale):
-                select_reasons.append(
-                    f"best sample scale {best.scale:.3f} outside [{min_scale}, {max_scale}]"
-                )
-            # Samples may differ across the clip because the reframe is *keyframed*
-            # (a smooth ramp) — that is a real animation to reproduce, not a fault.
-            # Distinguish it from erratic disagreement (a bad/ambiguous match).
-            animated = False
-            if len(ok_samples) >= 2:
-                varies, is_ramp = clip_motion_profile(ok_samples, self.config)
-                keyframes_enabled = bool(self.config.get("apply_keyframes_on_variance", True))
-                if varies and is_ramp and keyframes_enabled:
-                    animated = True
-                else:
-                    # Reject only a *large* erratic disagreement (a bad/ambiguous
-                    # match). Small non-monotonic jitter is treated as static — the
-                    # best sample is applied (handled below).
-                    lo, hi, spread = scale_spread([s.scale for s in ok_samples])
-                    if spread > max_scale_spread(self.config):
-                        select_reasons.append(
-                            f"samples disagree {lo:.3f}…{hi:.3f} (×{spread:.2f}), not a smooth ramp"
-                        )
-            result.problem = bool(select_reasons)
-            result.animated = animated and not result.problem
-            for msg in select_reasons:
-                result.warnings.append(msg)
-                self.logger.warning("Quality check: %s — %s", result.clip_name, msg)
-            if not result.problem and result.animated:
-                self.logger.info(
-                    "Animated reframe: %s — %d keyframes (%s)",
-                    result.clip_name,
-                    len(ok_samples),
-                    ", ".join(
-                        f"{s.sample_point.value} z={s.scale:.3f}"
-                        for s in sorted(ok_samples, key=lambda s: s.clip_local_frame)
-                    ),
-                )
-            elif not result.problem:
-                via = best.accept_via or "score"
-                if via == "score":
-                    self.logger.info(
-                        "Best sample: %s score %.4f (of %d ok)",
-                        best.sample_point.value,
-                        best.ecc_score,
-                        len(ok_samples),
-                    )
-                else:
-                    # Not a strict-score match — geometry trusted via corroboration or
-                    # cross-sample consensus. Flag it so it gets an eyeball check.
-                    note = f"accepted via {via} (verify difference.jpg / near-black%)"
-                    result.warnings.append(note)
-                    self.logger.warning(
-                        "Best sample: %s score %.4f via %s — %s",
-                        best.sample_point.value,
-                        best.ecc_score,
-                        via,
-                        "geometry trusted, eyeball recommended",
-                    )
-            result.use_mid_key = False
+            self._finalize_best_select(ctx, ok_samples)
         elif len(ok_samples) >= min_ok:
-            passed, fail_reasons = assess_clip_match_quality(ok_samples, self.config)
-            result.problem = not passed
-            for reason in fail_reasons:
-                result.warnings.append(reason)
-                self.logger.warning("Quality check: %s — %s", result.clip_name, reason)
-            stable = transforms_are_stable(
-                [(s.scale, s.position_x, s.position_y, s.rotation_deg) for s in ok_samples],
-                variance_threshold,
-            )
-            use_mid = bool(self.config.get("use_midpoint_keyframe", True)) and not stable
-            result.use_mid_key = use_mid and any(
-                s.sample_point == SamplePoint.MID for s in ok_samples
-            )
+            self._finalize_multi_sample(ctx, ok_samples)
         else:
             result.problem = True
-            stable = transforms_are_stable(transform_vectors, variance_threshold)
+            stable = transforms_are_stable(ctx.transform_vectors, self._variance_threshold)
             result.use_mid_key = bool(self.config.get("use_midpoint_keyframe", True)) and not stable
 
         if result.problem:
@@ -968,23 +1051,56 @@ class TransformAnalyzer:
                 min_ok,
             )
 
+    def _render_applied_result(
+        self, sample: Any, online_raw: np.ndarray, offline: np.ndarray, extra: list[str]
+    ) -> np.ndarray | None:
+        """Render the Inspector-applied result for the debug stack; appends its stat lines."""
+        try:
+            from matchref.clip_edit_transform import (
+                ClipEditTransform,
+                apply_clip_edit_to_frame,
+            )
+            from matchref.transform_convert import resolve_transform
+
+            canvas = self._timeline_canvas_size()
+            rt = resolve_transform(sample, self.config, canvas)
+            edit = ClipEditTransform(
+                zoom_x=rt.edit_zoom_x,
+                zoom_y=rt.edit_zoom_y,
+                pan=rt.edit_pan,
+                tilt=rt.edit_tilt,
+                rotation_deg=rt.edit_rotation,
+            )
+            result_render = apply_clip_edit_to_frame(online_raw, edit, canvas, self.config)
+            extra.append(
+                f"applied Inspector: Zoom={rt.edit_zoom_x:.4f} Pan={rt.edit_pan:.1f} "
+                f"Tilt={rt.edit_tilt:.1f} Rot={rt.edit_rotation:.2f} "
+                f"(input_scaling={self.config.get('input_scaling', 'fit')})"
+            )
+            # Content-robust quality of the *applied* result. near-black is fooled
+            # by overlays/bright/non-rigid content; structure (edge gradient) is
+            # the reliable number — low here = the geometry is actually off.
+            from matchref.precision_align import _Reference
+
+            g = _Reference(offline, self.config).gradient_ncc(result_render)
+            flag = "  <-- LOW, likely misaligned" if g < 0.4 else ""
+            extra.append(f"applied structure (gradient-NCC of result vs offline): {g:.3f}{flag}")
+            return result_render
+        except Exception:  # noqa: BLE001
+            return None
+
     def _save_match_debug(
         self,
-        result: ClipAnalysisResult,
+        ctx: _ClipContext,
         point: Any,
-        sample: Any,
-        online: np.ndarray,
-        offline: np.ndarray,
-        online_raw: np.ndarray | None,
-        compensate: bool,
-        mapping: Any,
-        compare_line: str,
+        loaded: _SampleFrames,
         alignment: Any,
         admit: float,
         apply_floor: float,
     ) -> None:
         if self._debug_dir is None:
             return
+        sample = loaded.sample
         if sample.ok:
             via = sample.accept_via or "score"
             match_line = (
@@ -1000,52 +1116,21 @@ class TransformAnalyzer:
         # Render exactly what gets written to the Inspector and stack it against the
         # offline, so the debug shows the *result*, not just the pre-transform inputs.
         result_render: np.ndarray | None = None
-        extra = [compare_line, match_line]
-        if sample.ok and online_raw is not None:
-            try:
-                from matchref.clip_edit_transform import (
-                    ClipEditTransform,
-                    apply_clip_edit_to_frame,
-                )
-                from matchref.transform_convert import resolve_transform
-
-                canvas = self._timeline_canvas_size()
-                rt = resolve_transform(sample, self.config, canvas)
-                edit = ClipEditTransform(
-                    zoom_x=rt.edit_zoom_x,
-                    zoom_y=rt.edit_zoom_y,
-                    pan=rt.edit_pan,
-                    tilt=rt.edit_tilt,
-                    rotation_deg=rt.edit_rotation,
-                )
-                result_render = apply_clip_edit_to_frame(online_raw, edit, canvas, self.config)
-                extra.append(
-                    f"applied Inspector: Zoom={rt.edit_zoom_x:.4f} Pan={rt.edit_pan:.1f} "
-                    f"Tilt={rt.edit_tilt:.1f} Rot={rt.edit_rotation:.2f} "
-                    f"(input_scaling={self.config.get('input_scaling', 'fit')})"
-                )
-                # Content-robust quality of the *applied* result. near-black is fooled
-                # by overlays/bright/non-rigid content; structure (edge gradient) is
-                # the reliable number — low here = the geometry is actually off.
-                from matchref.precision_align import _Reference
-
-                g = _Reference(offline, self.config).gradient_ncc(result_render)
-                flag = "  <-- LOW, likely misaligned" if g < 0.4 else ""
-                extra.append(
-                    f"applied structure (gradient-NCC of result vs offline): {g:.3f}{flag}"
-                )
-            except Exception:  # noqa: BLE001
-                result_render = None
+        extra = [loaded.compare_line, match_line]
+        if sample.ok and loaded.online_raw is not None:
+            result_render = self._render_applied_result(
+                sample, loaded.online_raw, loaded.offline, extra
+            )
 
         image_path = save_match_debug(
             self._debug_dir,
-            clip_name=result.clip_name,
+            clip_name=ctx.result.clip_name,
             sample_point=point.value,
-            online_for_match=online,
-            offline_ref=offline,
-            online_raw=online_raw,
+            online_for_match=loaded.online,
+            offline_ref=loaded.offline,
+            online_raw=loaded.online_raw,
             result_render=result_render,
-            mapping_detail=mapping.detail or mapping.source.value,
+            mapping_detail=loaded.mapping.detail or loaded.mapping.source.value,
             extra_lines=extra,
         )
         self.logger.info("  debug: %s", image_path)
