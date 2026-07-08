@@ -385,21 +385,16 @@ class TransformAnalyzer:
             match_base_angle=match_base_angle,
         )
 
-    def _load_sample(self, ctx: _ClipContext, point: Any, local_frame: int) -> _SampleFrames:
-        """Resolve the offline mapping and decode the online/offline frame pair.
+    def _resolve_sample_mapping(
+        self, ctx: _ClipContext, point: Any, local_frame: int
+    ) -> tuple[Any, Any, int]:
+        """Map a clip-local frame to its offline counterpart and clamp the source.
 
-        Returns a ``_SampleFrames`` bundle; ``terminal`` is set (and the sample is
-        already recorded on the result) when a frame is missing or no conform match
-        exists, so the caller skips alignment.
+        Returns (source_info, offline_mapping, clamped_source_frame); clamping is
+        warned on the clip result because it means the conform points past the media.
         """
-        result = ctx.result
-        baseline = ctx.baseline
-        media_path = ctx.media_path
-        canvas_size = ctx.canvas_size
-        timeline_item = ctx.timeline_item
-
         src = build_clip_source_info(
-            timeline_item, local_frame, result.clip_name, config=self.config
+            ctx.timeline_item, local_frame, ctx.result.clip_name, config=self.config
         )
         mapping = self.frames.offline_resolver.resolve(
             timeline_frame=src.timeline_frame,
@@ -408,44 +403,110 @@ class TransformAnalyzer:
             clip_name=src.clip_name,
             media_basename=src.media_basename,
         )
-
-        clamped_src = self.frames.clamp_source_frame(media_path, src.source_frame)
+        clamped_src = self.frames.clamp_source_frame(ctx.media_path, src.source_frame)
         if clamped_src != src.source_frame:
-            result.warnings.append(
+            ctx.result.warnings.append(
                 f"{point.value}: source frame {src.source_frame} clamped to {clamped_src}"
             )
-        online_raw = self.frames.get_online_frame(media_path, clamped_src)
+        return src, mapping, clamped_src
+
+    def _decode_online_frame(
+        self, ctx: _ClipContext, clamped_src: int
+    ) -> tuple[Any, Any, bool, bool]:
+        """Decode the online frame and pre-shape it for matching.
+
+        Absolute edit match fits the raw frame to the canvas; otherwise the clip's
+        baseline Edit transform is simulated onto it when in range. Returns
+        (online, online_raw, compensate, absolute).
+        """
+        online_raw = self.frames.get_online_frame(ctx.media_path, clamped_src)
         absolute = is_absolute_edit_match(self.config)
         compensate = (
             not absolute
             and use_baseline_compensation_for_match(self.config)
-            and should_simulate_edit_for_match(baseline, canvas_size, self.config)
+            and should_simulate_edit_for_match(ctx.baseline, ctx.canvas_size, self.config)
         )
         if online_raw is not None and absolute:
             online = _fit_frame_to_canvas(
                 online_raw,
-                canvas_size[0],
-                canvas_size[1],
+                ctx.canvas_size[0],
+                ctx.canvas_size[1],
                 str(self.config.get("input_scaling", "fit")),
             )
         else:
             online = online_raw  # type: ignore[assignment]
             if online is not None and compensate:
-                online = apply_clip_edit_to_frame(online, baseline, canvas_size, self.config)
+                online = apply_clip_edit_to_frame(
+                    online, ctx.baseline, ctx.canvas_size, self.config
+                )
             elif online is not None and bool(self.config.get("compensate_clip_transform", False)):
                 self.logger.debug(
                     "Skip Edit simulation (pan/tilt/zoom out of range); matching raw source"
                 )
-        offline, offline_reported = self.frames.get_offline_frame_at_index_with_meta(
-            mapping.offline_frame
-        )
-        if offline_reported >= 0 and offline_reported != mapping.offline_frame:
-            result.warnings.append(
-                f"{point.value}: offline decode index {offline_reported} "
-                f"(requested {mapping.offline_frame})"
-            )
+        return online, online_raw, compensate, absolute
 
-        sample = TransformSample(
+    def _decode_offline_frame(
+        self, ctx: _ClipContext, point: Any, offline_frame: int
+    ) -> tuple[Any, int]:
+        """Decode the offline reference frame, warning when the decoder lands off-index."""
+        offline, offline_reported = self.frames.get_offline_frame_at_index_with_meta(offline_frame)
+        if offline_reported >= 0 and offline_reported != offline_frame:
+            ctx.result.warnings.append(
+                f"{point.value}: offline decode index {offline_reported} "
+                f"(requested {offline_frame})"
+            )
+        return offline, offline_reported
+
+    def _terminal_sample(
+        self, ctx: _ClipContext, sample: TransformSample, point: Any, message: str, warning: str
+    ) -> _SampleFrames:
+        """Record a failed sample on the clip result and mark the clip as a problem."""
+        sample.message = message
+        ctx.result.samples.append(sample)
+        ctx.result.problem = True
+        ctx.result.warnings.append(f"{point.value}: {warning}")
+        return _SampleFrames(sample=sample, terminal=True)
+
+    def _conform_match_missing(self, mapping: Any) -> bool:
+        """True when strict conform mapping is requested but this frame fell back to timeline math."""
+        return (
+            self.conform.is_available
+            and mapping.source.value == "timeline"
+            and str(self.config.get("offline_mapping_mode", "auto")) == "conform"
+        )
+
+    def _log_sample_compare(
+        self,
+        ctx: _ClipContext,
+        point: Any,
+        src: Any,
+        mapping: Any,
+        clamped_src: int,
+        compensated: bool,
+        offline_reported: int,
+    ) -> str:
+        """Log the online↔offline mapping for one sample; returns the compare line."""
+        compare_line = format_sample_compare_line(
+            media_path=ctx.media_path,
+            source_frame=clamped_src,
+            timeline_frame=src.timeline_frame,
+            offline_frame=mapping.offline_frame,
+            offline_mapping=mapping.source.value,
+            mapping_detail=mapping.detail or "",
+            reel=src.reel_name,
+            baseline_zoom=ctx.baseline.zoom_x,
+            compensated=compensated,
+            offline_decoded_index=offline_reported,
+        )
+        self.logger.info(
+            "[%s %s] %s", ctx.result.clip_name, point.value, compare_line.replace("\n", " | ")
+        )
+        return compare_line
+
+    @staticmethod
+    def _make_sample(point: Any, local_frame: int, src: Any, mapping: Any) -> TransformSample:
+        """Seed a sample record with the resolved mapping bookkeeping."""
+        return TransformSample(
             sample_point=point,
             clip_local_frame=local_frame,
             timeline_frame=src.timeline_frame,
@@ -455,47 +516,49 @@ class TransformAnalyzer:
             source_frame=src.source_frame,
         )
 
+    def _load_sample(self, ctx: _ClipContext, point: Any, local_frame: int) -> _SampleFrames:
+        """Resolve the offline mapping and decode the online/offline frame pair.
+
+        Returns a ``_SampleFrames`` bundle; ``terminal`` is set (and the sample is
+        already recorded on the result) when a frame is missing or no conform match
+        exists, so the caller skips alignment.
+        """
+        src, mapping, clamped_src = self._resolve_sample_mapping(ctx, point, local_frame)
+        online, online_raw, compensate, absolute = self._decode_online_frame(ctx, clamped_src)
+        offline, offline_reported = self._decode_offline_frame(ctx, point, mapping.offline_frame)
+        sample = self._make_sample(point, local_frame, src, mapping)
+
         if online is None:
-            sample.message = "online frame unavailable"
-            result.samples.append(sample)
-            result.problem = True
-            result.warnings.append(f"{point.value}: online frame missing")
-            return _SampleFrames(sample=sample, terminal=True)
-        if offline is None:
-            sample.message = "offline frame unavailable"
-            result.samples.append(sample)
-            result.problem = True
-            result.warnings.append(
-                f"{point.value}: offline frame missing (mapping={mapping.source.value})"
+            return self._terminal_sample(
+                ctx, sample, point, "online frame unavailable", "online frame missing"
             )
-            return _SampleFrames(sample=sample, terminal=True)
+        if offline is None:
+            return self._terminal_sample(
+                ctx,
+                sample,
+                point,
+                "offline frame unavailable",
+                f"offline frame missing (mapping={mapping.source.value})",
+            )
 
-        compare_line = format_sample_compare_line(
-            media_path=media_path,
-            source_frame=clamped_src,
-            timeline_frame=src.timeline_frame,
-            offline_frame=mapping.offline_frame,
-            offline_mapping=mapping.source.value,
-            mapping_detail=mapping.detail or "",
-            reel=src.reel_name,
-            baseline_zoom=baseline.zoom_x,
+        compare_line = self._log_sample_compare(
+            ctx,
+            point,
+            src,
+            mapping,
+            clamped_src,
             compensated=compensate and online_raw is not None,
-            offline_decoded_index=offline_reported,
-        )
-        self.logger.info(
-            "[%s %s] %s", result.clip_name, point.value, compare_line.replace("\n", " | ")
+            offline_reported=offline_reported,
         )
 
-        if (
-            self.conform.is_available
-            and mapping.source.value == "timeline"
-            and str(self.config.get("offline_mapping_mode", "auto")) == "conform"
-        ):
-            sample.message = "conform match not found"
-            result.samples.append(sample)
-            result.problem = True
-            result.warnings.append(f"{point.value}: no EDL/XML match for reel={src.reel_name!r}")
-            return _SampleFrames(sample=sample, terminal=True)
+        if self._conform_match_missing(mapping):
+            return self._terminal_sample(
+                ctx,
+                sample,
+                point,
+                "conform match not found",
+                f"no EDL/XML match for reel={src.reel_name!r}",
+            )
 
         return _SampleFrames(
             sample=sample,
