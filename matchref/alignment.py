@@ -382,10 +382,13 @@ def _align_features(
     if len(good) < 8:
         return None
 
+    # reshape takes a shape tuple — pylint E1121 flags the unpacked-ints form.
     offline_pts = np.array([kp_off[m.queryIdx].pt for m in good], dtype=np.float32).reshape(
-        -1, 1, 2
+        (-1, 1, 2)
     )
-    online_pts = np.array([kp_on[m.trainIdx].pt for m in good], dtype=np.float32).reshape(-1, 1, 2)
+    online_pts = np.array([kp_on[m.trainIdx].pt for m in good], dtype=np.float32).reshape(
+        (-1, 1, 2)
+    )
 
     warp, inliers = cv2.estimateAffinePartial2D(
         online_pts,
