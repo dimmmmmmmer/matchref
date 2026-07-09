@@ -293,6 +293,14 @@ class ConformIndex:
         ]
         keys = [k for k in keys if k]
 
+        return (
+            self._match_by_reel_or_name(keys, source_frame)
+            or self._match_by_aliases(keys, source_frame)
+            or self._best_overlap_event(source_frame)
+        )
+
+    def _match_by_reel_or_name(self, keys: list[str], source_frame: int) -> EdlEvent | None:
+        """Strict pass: reel/clip-name match, ignoring the placeholder AX reel."""
         for event in self.events:
             if event.reel == "AX" or event.reel.upper() == "AX":
                 continue
@@ -303,7 +311,10 @@ class ConformIndex:
                 continue
             if event.src_in <= source_frame < event.src_out:
                 return event
+        return None
 
+    def _match_by_aliases(self, keys: list[str], source_frame: int) -> EdlEvent | None:
+        """Relaxed pass: match on any event alias (clip name, file stem, tape, reel)."""
         for event in self.events:
             candidates = [
                 _normalize_key(event.clip_name),
@@ -315,7 +326,10 @@ class ConformIndex:
                 continue
             if event.src_in <= source_frame < event.src_out:
                 return event
+        return None
 
+    def _best_overlap_event(self, source_frame: int) -> EdlEvent | None:
+        """Last resort: any event whose source range covers the frame."""
         best: EdlEvent | None = None
         best_overlap = -1
         for event in self.events:

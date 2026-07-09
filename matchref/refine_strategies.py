@@ -161,39 +161,7 @@ def refine_multi_strategy(
     score_fn: Callable[[np.ndarray], float],
     should_cancel: Callable[[], bool] | None = None,
 ) -> RefineOutcome:
-    width, height = int(canvas_size[0]), int(canvas_size[1])
-    max_zoom = float(config.get("refine_zoom_max", 4.0))
-    min_zoom = float(config.get("refine_zoom_min", 0.25))
-    pan_lim = max(width, height) * float(config.get("refine_pan_limit_scale", 1.5))
-
-    zoom_steps = config.get("refine_zoom_steps")
-    if not isinstance(zoom_steps, list):
-        zoom_steps = [0.03, 0.01, 0.002, 0.0005]
-    pan_steps = config.get("refine_pan_steps")
-    if not isinstance(pan_steps, list):
-        pan_steps = [4.0, 1.0, 0.25]
-    rot_steps = config.get("refine_rotation_steps")
-    if not isinstance(rot_steps, list):
-        rot_steps = [0.2, 0.05, 0.025]
-
-    ctx = _RefineContext(
-        online_raw=online_raw,
-        offline_fit=offline_fit,
-        canvas_size=canvas_size,
-        config=config,
-        min_zoom=min_zoom,
-        max_zoom=max_zoom,
-        pan_lim=pan_lim,
-        tilt_lim=pan_lim,
-        max_rot=float(config.get("max_alignment_rotation_deg", 3.0)),
-        use_rotation=not bool(config.get("lock_alignment_rotation", False)),
-        zoom_steps=[float(x) for x in zoom_steps],
-        pan_steps=[float(x) for x in pan_steps],
-        rot_steps=[float(x) for x in rot_steps],
-        cost_fn=cost_fn,
-        score_fn=score_fn,
-    )
-
+    ctx = _build_refine_context(online_raw, offline_fit, canvas_size, config, cost_fn, score_fn)
     start = [
         float(initial.zoom_x),
         float(initial.pan),
@@ -201,6 +169,66 @@ def refine_multi_strategy(
         float(initial.rotation_deg),
     ]
 
+    best_edit, best_ncc, best_label = _best_order_result(start, ctx, config, should_cancel)
+    if best_edit is None:
+        best_edit = initial
+        best_ncc = 0.0
+
+    final = quantize_clip_edit(best_edit, config)
+    snap = float(config.get("snap_pan_tilt_below_pixels", 2.0))
+    used_position = abs(final.pan) >= snap or abs(final.tilt) >= snap
+    return RefineOutcome(
+        edit=final,
+        ncc=best_ncc,
+        used_position=used_position,
+        strategy=best_label,
+    )
+
+
+def _steps_from_config(config: AppConfig, key: str, default: list[float]) -> list[float]:
+    steps = config.get(key)
+    if not isinstance(steps, list):
+        steps = default
+    return [float(x) for x in steps]
+
+
+def _build_refine_context(
+    online_raw: np.ndarray,
+    offline_fit: np.ndarray,
+    canvas_size: tuple[int, int],
+    config: AppConfig,
+    cost_fn: Callable[[list[float]], float],
+    score_fn: Callable[[np.ndarray], float],
+) -> _RefineContext:
+    """Bounds, step schedules and callbacks shared by every strategy order."""
+    width, height = int(canvas_size[0]), int(canvas_size[1])
+    pan_lim = max(width, height) * float(config.get("refine_pan_limit_scale", 1.5))
+    return _RefineContext(
+        online_raw=online_raw,
+        offline_fit=offline_fit,
+        canvas_size=canvas_size,
+        config=config,
+        min_zoom=float(config.get("refine_zoom_min", 0.25)),
+        max_zoom=float(config.get("refine_zoom_max", 4.0)),
+        pan_lim=pan_lim,
+        tilt_lim=pan_lim,
+        max_rot=float(config.get("max_alignment_rotation_deg", 3.0)),
+        use_rotation=not bool(config.get("lock_alignment_rotation", False)),
+        zoom_steps=_steps_from_config(config, "refine_zoom_steps", [0.03, 0.01, 0.002, 0.0005]),
+        pan_steps=_steps_from_config(config, "refine_pan_steps", [4.0, 1.0, 0.25]),
+        rot_steps=_steps_from_config(config, "refine_rotation_steps", [0.2, 0.05, 0.025]),
+        cost_fn=cost_fn,
+        score_fn=score_fn,
+    )
+
+
+def _best_order_result(
+    start: list[float],
+    ctx: _RefineContext,
+    config: AppConfig,
+    should_cancel: Callable[[], bool] | None,
+) -> tuple[ClipEditTransform | None, float, str]:
+    """Run every configured strategy order and keep the highest-scoring edit."""
     orders = strategy_orders_from_config(config)
     best_edit: ClipEditTransform | None = None
     best_ncc = -1.0
@@ -219,17 +247,4 @@ def refine_multi_strategy(
             best_label = _order_label(order)
         if early_exit and _refine_ncc_passes(ncc, config):
             break
-
-    if best_edit is None:
-        best_edit = initial
-        best_ncc = 0.0
-
-    final = quantize_clip_edit(best_edit, config)
-    snap = float(config.get("snap_pan_tilt_below_pixels", 2.0))
-    used_position = abs(final.pan) >= snap or abs(final.tilt) >= snap
-    return RefineOutcome(
-        edit=final,
-        ncc=best_ncc,
-        used_position=used_position,
-        strategy=best_label,
-    )
+    return best_edit, best_ncc, best_label

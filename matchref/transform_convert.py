@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -107,81 +108,12 @@ def resolve_transform(
 
     refined = getattr(sample, "refined_edit", None)
     if refined is not None:
-        rot_out = float(refined.rotation_deg)
-        if bool(config.get("invert_rotation", False)):
-            rot_out = -rot_out
-        q = quantize_clip_edit(
-            ClipEditTransform(
-                zoom_x=max(0.001, min(16.0, float(refined.zoom_x))),
-                zoom_y=max(0.001, min(16.0, float(refined.zoom_y))),
-                pan=float(refined.pan),
-                tilt=float(refined.tilt),
-                rotation_deg=rot_out,
-            ),
-            config,
-        )
-        return ResolvedTransform(
-            scale=q.zoom_x,
-            rotation_deg=q.rotation_deg,
-            edit_zoom_x=q.zoom_x,
-            edit_zoom_y=q.zoom_y,
-            edit_pan=q.pan,
-            edit_tilt=q.tilt,
-            edit_rotation=q.rotation_deg,
-        )
+        return _resolved_from_refined(refined, config)
 
-    warp = getattr(sample, "warp_matrix", None)
-    if warp is not None:
-        invert = bool(config.get("alignment_invert", False))
-        scale, _tx_corner, _ty_corner, rot = decompose_warp_matrix(
-            warp, width, height, invert=invert
-        )
-        # Pan/Tilt must be center-relative (Resolve scales about center), not the
-        # raw corner translation returned by decompose_warp_matrix.
-        tx, ty = center_relative_translation(warp, width, height, invert=invert)
-    else:
-        scale = float(sample.scale)
-        rot = float(sample.rotation_deg)
-        tx = float(sample.position_x) * width
-        ty = float(sample.position_y) * height
-
-    # Resolve Edit: Zoom 1.0 = 100%. An edit_zoom_base > 10 is treated as the legacy "percent" mode.
-    zoom_base = float(config.get("edit_zoom_base", 1.0))
-    use_percent = bool(config.get("edit_zoom_as_percent", False)) or zoom_base > 10.0
-    if use_percent:
-        zoom_x = zoom_y = (zoom_base / 100.0) * scale
-    else:
-        zoom_x = zoom_y = zoom_base * scale
-    if not config.get("match_scale", True):
-        zoom_x = zoom_y = (zoom_base / 100.0) if use_percent else zoom_base
-
-    zoom_x = max(0.001, min(zoom_x, 16.0))
-    zoom_y = max(0.001, min(zoom_y, 16.0))
-
-    if edit_priority_zoom(config):
-        if warp is not None and should_apply_position_from_warp(config, warp, timeline_size):
-            pan, tilt = translation_pixels_from_warp(warp, timeline_size, config)
-        else:
-            pan, tilt = 0.0, 0.0
-    elif bool(config.get("match_position", True)):
-        if bool(config.get("edit_pan_normalized", False)):
-            pan, tilt = tx / width, ty / height
-        else:
-            pan, tilt = tx, ty
-        if bool(config.get("invert_pan_x", False)):
-            pan = -pan
-        if bool(config.get("invert_tilt_y", True)):
-            tilt = -tilt
-    else:
-        pan, tilt = 0.0, 0.0
-
-    rot_out = rot if config.get("match_rotation", True) and not edit_priority_zoom(config) else 0.0
-    if bool(config.get("invert_rotation", False)):
-        rot_out = -rot_out
-
-    max_rot = float(config.get("max_alignment_rotation_deg", 8.0))
-    if abs(rot_out) > max_rot:
-        rot_out = 0.0
+    scale, rot, tx, ty, warp = _sample_geometry(sample, config, width, height)
+    zoom_x = zoom_y = _edit_zoom(scale, config)
+    pan, tilt = _edit_pan_tilt(config, warp, timeline_size, tx, ty, width, height)
+    rot_out = _edit_rotation(rot, config)
 
     compose = compose_result_with_baseline(config) and baseline is not None
     if compose and baseline is not None:
@@ -214,6 +146,102 @@ def resolve_transform(
         edit_tilt=q.tilt,
         edit_rotation=q.rotation_deg,
     )
+
+
+def _resolved_from_refined(refined: ClipEditTransform, config: AppConfig) -> ResolvedTransform:
+    """A refined Edit is already in Inspector units — clamp, quantize and return it."""
+    rot_out = float(refined.rotation_deg)
+    if bool(config.get("invert_rotation", False)):
+        rot_out = -rot_out
+    q = quantize_clip_edit(
+        ClipEditTransform(
+            zoom_x=max(0.001, min(16.0, float(refined.zoom_x))),
+            zoom_y=max(0.001, min(16.0, float(refined.zoom_y))),
+            pan=float(refined.pan),
+            tilt=float(refined.tilt),
+            rotation_deg=rot_out,
+        ),
+        config,
+    )
+    return ResolvedTransform(
+        scale=q.zoom_x,
+        rotation_deg=q.rotation_deg,
+        edit_zoom_x=q.zoom_x,
+        edit_zoom_y=q.zoom_y,
+        edit_pan=q.pan,
+        edit_tilt=q.tilt,
+        edit_rotation=q.rotation_deg,
+    )
+
+
+def _sample_geometry(
+    sample: TransformSample, config: AppConfig, width: int, height: int
+) -> tuple[float, float, float, float, Any]:
+    """(scale, rotation, tx, ty, warp) from the warp matrix or the raw sample fields."""
+    warp = getattr(sample, "warp_matrix", None)
+    if warp is not None:
+        invert = bool(config.get("alignment_invert", False))
+        scale, _tx_corner, _ty_corner, rot = decompose_warp_matrix(
+            warp, width, height, invert=invert
+        )
+        # Pan/Tilt must be center-relative (Resolve scales about center), not the
+        # raw corner translation returned by decompose_warp_matrix.
+        tx, ty = center_relative_translation(warp, width, height, invert=invert)
+    else:
+        scale = float(sample.scale)
+        rot = float(sample.rotation_deg)
+        tx = float(sample.position_x) * width
+        ty = float(sample.position_y) * height
+    return scale, rot, tx, ty, warp
+
+
+def _edit_zoom(scale: float, config: AppConfig) -> float:
+    """Inspector Zoom for a match scale, honoring the zoom base / percent modes."""
+    # Resolve Edit: Zoom 1.0 = 100%. An edit_zoom_base > 10 is treated as the legacy "percent" mode.
+    zoom_base = float(config.get("edit_zoom_base", 1.0))
+    use_percent = bool(config.get("edit_zoom_as_percent", False)) or zoom_base > 10.0
+    zoom = ((zoom_base / 100.0) if use_percent else zoom_base) * scale
+    if not config.get("match_scale", True):
+        zoom = (zoom_base / 100.0) if use_percent else zoom_base
+    return max(0.001, min(zoom, 16.0))
+
+
+def _edit_pan_tilt(
+    config: AppConfig,
+    warp: Any,
+    timeline_size: tuple[int, int],
+    tx: float,
+    ty: float,
+    width: int,
+    height: int,
+) -> tuple[float, float]:
+    """Inspector Pan/Tilt for the sample, or (0, 0) when position is not applied."""
+    if edit_priority_zoom(config):
+        if warp is not None and should_apply_position_from_warp(config, warp, timeline_size):
+            return translation_pixels_from_warp(warp, timeline_size, config)
+        return 0.0, 0.0
+    if not bool(config.get("match_position", True)):
+        return 0.0, 0.0
+    if bool(config.get("edit_pan_normalized", False)):
+        pan, tilt = tx / width, ty / height
+    else:
+        pan, tilt = tx, ty
+    if bool(config.get("invert_pan_x", False)):
+        pan = -pan
+    if bool(config.get("invert_tilt_y", True)):
+        tilt = -tilt
+    return pan, tilt
+
+
+def _edit_rotation(rot: float, config: AppConfig) -> float:
+    """Inspector Rotation, zeroed when unmatched, zoom-priority, or out of range."""
+    rot_out = rot if config.get("match_rotation", True) and not edit_priority_zoom(config) else 0.0
+    if bool(config.get("invert_rotation", False)):
+        rot_out = -rot_out
+    max_rot = float(config.get("max_alignment_rotation_deg", 8.0))
+    if abs(rot_out) > max_rot:
+        return 0.0
+    return rot_out
 
 
 def baseline_from_result(result: ClipAnalysisResult) -> ClipEditTransform:
