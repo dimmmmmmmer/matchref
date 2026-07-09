@@ -26,10 +26,8 @@ def test_stops_after_first_order_meets_ncc_threshold() -> None:
         return 0.96 if attempts["n"] == 1 else 0.99
 
     online = np.zeros((64, 64, 3), dtype=np.uint8)
-    offline = np.zeros((64, 64, 3), dtype=np.uint8)
     outcome = refine_multi_strategy(
         online_raw=online,
-        offline_fit=offline,
         canvas_size=(64, 64),
         config=cfg,
         initial=ClipEditTransform(),
@@ -56,7 +54,6 @@ def test_tries_all_orders_when_early_exit_disabled() -> None:
 
     outcome = refine_multi_strategy(
         online_raw=np.zeros((32, 32, 3), dtype=np.uint8),
-        offline_fit=np.zeros((32, 32, 3), dtype=np.uint8),
         canvas_size=(32, 32),
         config=cfg,
         initial=ClipEditTransform(),

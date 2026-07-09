@@ -73,7 +73,8 @@ def _show_startup_error(exc: BaseException) -> None:
     try:
         from PySide6.QtWidgets import QApplication, QMessageBox
 
-        QApplication.instance() or QApplication([])
+        if QApplication.instance() is None:
+            QApplication([])
         QMessageBox.critical(None, "MatchRef", msg)
     except Exception:
         print(f"MatchRef error: {msg}", file=sys.stderr)

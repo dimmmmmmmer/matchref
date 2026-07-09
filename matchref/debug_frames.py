@@ -3,12 +3,22 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
 import numpy as np
 
 from matchref.config import AppConfig
+
+
+@dataclass
+class DebugImages:
+    # The frame set written for one sample's debug bundle.
+    online_for_match: np.ndarray
+    offline_ref: np.ndarray
+    online_raw: np.ndarray | None = None
+    result_render: np.ndarray | None = None
 
 
 def resolve_debug_dir(config: AppConfig) -> Path | None:
@@ -71,10 +81,7 @@ def save_match_debug(
     *,
     clip_name: str,
     sample_point: str,
-    online_for_match: np.ndarray,
-    offline_ref: np.ndarray,
-    online_raw: np.ndarray | None = None,
-    result_render: np.ndarray | None = None,
+    images: DebugImages,
     mapping_detail: str = "",
     extra_lines: list[str] | None = None,
 ) -> str:
@@ -88,14 +95,14 @@ def save_match_debug(
     base = debug_dir / stamp / point
     base.mkdir(parents=True, exist_ok=True)
 
-    compare = _stack_horizontal(online_for_match, offline_ref)
+    compare = _stack_horizontal(images.online_for_match, images.offline_ref)
     image_path = base / "compare_online_vs_offline.jpg"
     cv2.imwrite(str(image_path), compare)
 
-    diff_line = _write_result_images(base, result_render, offline_ref)
-    raw_line = _write_raw_image(base, online_raw, online_for_match)
-    cv2.imwrite(str(base / "online_for_match.jpg"), online_for_match)
-    cv2.imwrite(str(base / "offline_reference.jpg"), offline_ref)
+    diff_line = _write_result_images(base, images.result_render, images.offline_ref)
+    raw_line = _write_raw_image(base, images.online_raw, images.online_for_match)
+    cv2.imwrite(str(base / "online_for_match.jpg"), images.online_for_match)
+    cv2.imwrite(str(base / "offline_reference.jpg"), images.offline_ref)
 
     lines = [
         f"clip: {clip_name}",
@@ -147,32 +154,38 @@ def _write_raw_image(
     return f"online_raw_source: {rw}x{rh} (native source, before fit) → fit canvas {fw}x{fh}"
 
 
-def format_sample_compare_line(
-    *,
-    media_path: str,
-    source_frame: int,
-    timeline_frame: int,
-    offline_frame: int,
-    offline_mapping: str,
-    mapping_detail: str,
-    reel: str,
-    baseline_zoom: float,
-    compensated: bool,
-    offline_decoded_index: int = -1,
-) -> str:
+@dataclass
+class SampleCompareInfo:
+    # Everything the online↔offline compare line reports for one sample.
+    media_path: str
+    source_frame: int
+    timeline_frame: int
+    offline_frame: int
+    offline_mapping: str
+    mapping_detail: str = ""
+    reel: str = ""
+    baseline_zoom: float = 1.0
+    compensated: bool = False
+    offline_decoded_index: int = -1
+
+
+def format_sample_compare_line(info: SampleCompareInfo) -> str:
     comp = (
-        "yes (current Edit on source before match)" if compensated else "no (identity / fit only)"
+        "yes (current Edit on source before match)"
+        if info.compensated
+        else "no (identity / fit only)"
     )
     decode_note = ""
-    if offline_decoded_index >= 0:
-        decode_note = f" | decoded index {offline_decoded_index}"
-        if offline_decoded_index != offline_frame:
-            decode_note += f" (requested {offline_frame})"
+    if info.offline_decoded_index >= 0:
+        decode_note = f" | decoded index {info.offline_decoded_index}"
+        if info.offline_decoded_index != info.offline_frame:
+            decode_note += f" (requested {info.offline_frame})"
     return (
-        f"online: {Path(media_path).name} src frame {source_frame} | "
-        f"timeline {timeline_frame} | pre-transform sim: {comp} | baseline zoom {baseline_zoom:.3f}\n"
-        f"offline: lock-cut frame {offline_frame} via {offline_mapping} — {mapping_detail}"
-        f"{decode_note}\n"
-        f"(hub = Resolve timeline frame {timeline_frame})\n"
-        f"reel: {reel!r}"
+        f"online: {Path(info.media_path).name} src frame {info.source_frame} | "
+        f"timeline {info.timeline_frame} | pre-transform sim: {comp} | "
+        f"baseline zoom {info.baseline_zoom:.3f}\n"
+        f"offline: lock-cut frame {info.offline_frame} via {info.offline_mapping} — "
+        f"{info.mapping_detail}{decode_note}\n"
+        f"(hub = Resolve timeline frame {info.timeline_frame})\n"
+        f"reel: {info.reel!r}"
     )

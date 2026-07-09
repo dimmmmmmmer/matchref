@@ -1,8 +1,20 @@
-# Codacy runs Prospector over the repo. Its pydocstyle pass enforces docstring
-# layout rules (D203, D205, D212/D213, …) that contradict both this codebase's
-# convention (summary on the first line) and the ruff formatter, which strips
-# the blank line D203 demands — the two can never both be satisfied. Docstring
-# style here is governed by review and ruff; disable the checker instead of
-# fighting it line by line.
+# Codacy runs Prospector over the repo and, once a profile file exists, enables
+# prospector's default checker suite (pylint, pycodestyle, mccabe, …) on top of
+# it. Everything these checkers cover is already enforced elsewhere in this
+# repo — ruff (lint + format) and mypy run in CI, and Codacy runs standalone
+# Pylint, Bandit and Lizard as separate tools — so running them twice only
+# produces duplicate/conflicting findings. pydocstyle specifically enforces
+# layout rules (D203/D205/D212/D213/…) that contradict both the repo docstring
+# convention and ruff-format (which strips the blank line D203 requires).
 pydocstyle:
+  run: false
+pylint:
+  run: false
+pycodestyle:
+  run: false
+pyflakes:
+  run: false
+mccabe:
+  run: false
+dodgy:
   run: false
