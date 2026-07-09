@@ -264,10 +264,9 @@ def _zoom_only_rescue(
     )
 
 
+# Boolean gates feeding the agreement-mode acceptance decision.
 @dataclass
 class _RefineSignals:
-    """Boolean gates feeding the agreement-mode acceptance decision."""
-
     plausible: bool
     structural: bool
     corroborated: bool

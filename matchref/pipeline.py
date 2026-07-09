@@ -17,10 +17,9 @@ from matchref.timeline_context import TimelineContext
 from matchref.transform_analysis import TransformAnalyzer, _clip_name
 
 
+# Workers, callbacks and accumulators shared by the per-clip processing loop.
 @dataclass
 class _RunState:
-    """Workers, callbacks and accumulators shared by the per-clip processing loop."""
-
     analyzer: TransformAnalyzer
     applier: EditTransformApplier | None
     report: AnalysisReport

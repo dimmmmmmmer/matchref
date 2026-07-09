@@ -169,20 +169,18 @@ def _render_with_edit(
     return apply_clip_edit_to_frame(online_raw, edit, canvas_size, config)
 
 
+# The frame pair and canvas a refine search runs against.
 @dataclass
 class _RefineJob:
-    """The frame pair and canvas a refine search runs against."""
-
     online_raw: np.ndarray
     offline_ref: np.ndarray
     canvas_size: tuple[int, int]
     config: AppConfig
 
 
+# Coordinate-descent step schedules per parameter group.
 @dataclass
 class _Steps:
-    """Coordinate-descent step schedules per parameter group."""
-
     zoom: list[Any]
     pan: list[Any]
     rot: list[Any]
