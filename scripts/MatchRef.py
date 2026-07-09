@@ -83,7 +83,9 @@ def _launch_via_venv(project: Path) -> bool:
     if py is None or not main_py.is_file():
         return False
     # Fixed argv: the bundled venv python + this project's main.py — no user input.
-    subprocess.Popen(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+    # The GUI is launched detached (start_new_session) and must not be waited on,
+    # so a `with` block is wrong here.
+    subprocess.Popen(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args # pylint: disable=consider-using-with
         [str(py), str(main_py)],
         cwd=str(project),
         stdout=subprocess.DEVNULL,
