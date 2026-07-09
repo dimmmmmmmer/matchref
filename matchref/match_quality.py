@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from matchref.alignment import transforms_are_stable
 from matchref.clip_edit_transform import ClipEditTransform
 from matchref.config import AppConfig
@@ -205,16 +207,7 @@ def sample_refine_accepted(
     plausible = refine_edit_plausible(edit, timeline_size, config)
     structural = refine_structure_passes(gradient_ncc, config)
     corroborated = geometry_corroborated(ecc_scale, edit.zoom_x, config)
-    snap = float(config.get("snap_pan_tilt_below_pixels", 2.0))
-    position_zero = abs(float(edit.pan)) < snap and abs(float(edit.tilt)) < snap
-    # Only rescues the low-structure band [zoom_only_floor, normal floor): a clip that
-    # already clears the normal structure floor must go through the standard logic.
-    zoom_only = (
-        not structural
-        and position_zero
-        and corroborated
-        and float(gradient_ncc) >= float(config.get("refine_zoom_only_min_gradient", 0.30))
-    )
+    zoom_only = _zoom_only_rescue(structural, corroborated, edit, gradient_ncc, config)
 
     pan_reason = (
         f"pan/tilt {edit.pan:.0f},{edit.tilt:.0f} exceed "
@@ -234,17 +227,76 @@ def sample_refine_accepted(
             reasons.append(f"NCC {ncc:.4f} < {refine_ncc_threshold(config):.2f}")
         return (not reasons), reasons, "score"
 
+    signals = _RefineSignals(
+        plausible=plausible,
+        structural=structural,
+        corroborated=corroborated,
+        zoom_only=zoom_only,
+    )
+    return _agreement_verdict(
+        ncc=ncc,
+        ecc_scale=ecc_scale,
+        edit=edit,
+        config=config,
+        signals=signals,
+        pan_reason=pan_reason,
+        struct_reason=struct_reason,
+    )
+
+
+def _zoom_only_rescue(
+    structural: bool,
+    corroborated: bool,
+    edit: ClipEditTransform,
+    gradient_ncc: float,
+    config: AppConfig,
+) -> bool:
+    """A no-reframe clip whose corroborated zoom may be trusted on zoom alone."""
+    # Only rescues the low-structure band [zoom_only_floor, normal floor): a clip that
+    # already clears the normal structure floor must go through the standard logic.
+    snap = float(config.get("snap_pan_tilt_below_pixels", 2.0))
+    position_zero = abs(float(edit.pan)) < snap and abs(float(edit.tilt)) < snap
+    return (
+        not structural
+        and position_zero
+        and corroborated
+        and float(gradient_ncc) >= float(config.get("refine_zoom_only_min_gradient", 0.30))
+    )
+
+
+# Boolean gates feeding the agreement-mode acceptance decision.
+@dataclass
+class _RefineSignals:
+    plausible: bool
+    structural: bool
+    corroborated: bool
+    zoom_only: bool
+
+
+def _agreement_verdict(
+    *,
+    ncc: float,
+    ecc_scale: float,
+    edit: ClipEditTransform,
+    config: AppConfig,
+    signals: _RefineSignals,
+    pan_reason: str,
+    struct_reason: str,
+) -> tuple[bool, list[str], str]:
+    """Agreement-mode decision: high NCC, corroborated geometry, or the zoom-only rescue."""
     high_conf = float(ncc) >= float(config.get("min_match_score", 0.95))
     trust_floor = geometry_trust_min_score(config)
-    score_ok = high_conf or (corroborated and float(ncc) >= trust_floor) or zoom_only
+    score_ok = (
+        high_conf or (signals.corroborated and float(ncc) >= trust_floor) or signals.zoom_only
+    )
 
-    reasons = []
-    if not plausible:
+    reasons: list[str] = []
+    if not signals.plausible:
         reasons.append(pan_reason)
-    if not structural and not zoom_only:
+    if not signals.structural and not signals.zoom_only:
         reasons.append(struct_reason)
     if not score_ok:
-        if not corroborated:
+        if not signals.corroborated:
             reasons.append(
                 f"zoom disagree (ecc {ecc_scale:.3f} vs refine {edit.zoom_x:.3f}); NCC {ncc:.4f}"
             )
@@ -255,7 +307,7 @@ def sample_refine_accepted(
         return False, reasons, ""
     if high_conf:
         via = "score"
-    elif not structural:  # rescued only by the zoom-only relaxation
+    elif not signals.structural:  # rescued only by the zoom-only relaxation
         via = "zoom-only"
     else:
         via = "agreement"

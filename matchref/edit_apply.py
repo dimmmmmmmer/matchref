@@ -57,42 +57,14 @@ class EditTransformApplier:
         ok_samples = [s for s in result.samples if s.ok]
         if not ok_samples:
             raise RuntimeError("No successful samples.")
+        ok_samples = self._prefer_mid_samples(result, ok_samples)
 
-        if result.use_mid_key:
-            mid_only = [s for s in ok_samples if s.sample_point == SamplePoint.MID]
-            if mid_only:
-                ok_samples = mid_only
-
-        open_page = _callable(self.resolve, "OpenPage")
-        if open_page is not None:
-            try:
-                open_page("edit")
-            except Exception:
-                pass
+        self._open_edit_page()
 
         use_playhead = bool(self.config.get("edit_keyframe_via_playhead", True))
-        clip_start = 0
-        try:
-            clip_start = int(item.GetStart())
-        except Exception:
-            pass
+        clip_start = self._clip_start(item)
 
-        # Perspective match is applied as a Fusion CornerPin (Edit can't do it) when
-        # perspective_match_enabled and a homography was solved.
-        from matchref.cornerpin_apply import CornerPinApplier, should_use_cornerpin
-
-        if should_use_cornerpin(result, self.config):
-            CornerPinApplier(self.config, self._size, self.logger).apply(item, result)
-            return
-
-        # Animated clips can be keyframed via a Fusion Transform node (cleaner than
-        # the Edit-page playhead keyframes) when apply_via_fusion is enabled.
-        from matchref.fusion_apply import FusionTransformApplier, should_use_fusion
-
-        if should_use_fusion(result, self.config):
-            FusionTransformApplier(self.config, self._size, self.logger).apply_animated(
-                item, result
-            )
+        if self._apply_via_alternate_backend(item, result):
             return
 
         kf_enabled = self._enable_keyframe_mode()
@@ -109,6 +81,83 @@ class EditTransformApplier:
             )
             return
 
+        last_resolved, write_samples = self._select_static_transform(
+            ok_samples, sorted_samples, compose_bl
+        )
+        if not self._resolved_values_sane(last_resolved):
+            raise RuntimeError(
+                f"Refusing to apply insane transform (zoom={last_resolved.edit_zoom_x:.3f}, "
+                f"pan={last_resolved.edit_pan:.1f}, tilt={last_resolved.edit_tilt:.1f})"
+            )
+
+        for sample in write_samples:
+            if use_playhead:
+                self._seek(clip_start + sample.clip_local_frame)
+            self._set_edit_properties(item, last_resolved)
+
+        self.logger.info(
+            "Edit Inspector: %s — %d point(s) Zoom=%.4f Pan=%.1f Tilt=%.1f Rot=%.1f",
+            result.clip_name,
+            len(ok_samples),
+            last_resolved.edit_zoom_x,
+            last_resolved.edit_pan,
+            last_resolved.edit_tilt,
+            last_resolved.edit_rotation,
+        )
+
+    @staticmethod
+    def _prefer_mid_samples(
+        result: ClipAnalysisResult, ok_samples: list[TransformSample]
+    ) -> list[TransformSample]:
+        """MID-only samples when the clip decision asked for the midpoint keyframe."""
+        if not result.use_mid_key:
+            return ok_samples
+        mid_only = [s for s in ok_samples if s.sample_point == SamplePoint.MID]
+        return mid_only or ok_samples
+
+    @staticmethod
+    def _clip_start(item: Any) -> int:
+        try:
+            return int(item.GetStart())
+        except Exception:
+            return 0
+
+    def _open_edit_page(self) -> None:
+        open_page = _callable(self.resolve, "OpenPage")
+        if open_page is not None:
+            try:
+                open_page("edit")
+            except Exception:
+                pass
+
+    def _apply_via_alternate_backend(self, item: Any, result: ClipAnalysisResult) -> bool:
+        """Perspective and Fusion backends; True when one of them handled the clip."""
+        # Perspective match is applied as a Fusion CornerPin (Edit can't do it) when
+        # perspective_match_enabled and a homography was solved.
+        from matchref.cornerpin_apply import CornerPinApplier, should_use_cornerpin
+
+        if should_use_cornerpin(result, self.config):
+            CornerPinApplier(self.config, self._size, self.logger).apply(item, result)
+            return True
+
+        # Animated clips can be keyframed via a Fusion Transform node (cleaner than
+        # the Edit-page playhead keyframes) when apply_via_fusion is enabled.
+        from matchref.fusion_apply import FusionTransformApplier, should_use_fusion
+
+        if should_use_fusion(result, self.config):
+            FusionTransformApplier(self.config, self._size, self.logger).apply_animated(
+                item, result
+            )
+            return True
+        return False
+
+    def _select_static_transform(
+        self,
+        ok_samples: list[TransformSample],
+        sorted_samples: list[TransformSample],
+        compose_bl: Any | None,
+    ) -> tuple[Any, list[TransformSample]]:
+        """Pick the transform to write and the samples to write it at."""
         select = str(self.config.get("apply_transform_select", "best")).lower()
         if bool(self.config.get("apply_median_transform", False)) and len(sorted_samples) >= 2:
             select = "median"  # back-compat
@@ -118,42 +167,19 @@ class EditTransformApplier:
             # matched best (highest score) rather than averaging — the median would
             # be dragged toward a weak frame (motion blur, flame flicker, occlusion).
             best = max(ok_samples, key=lambda s: s.ecc_score)
-            last_resolved = resolve_transform(best, self.config, self._size, baseline=compose_bl)
-            sorted_samples = [best]
+            resolved = resolve_transform(best, self.config, self._size, baseline=compose_bl)
             self.logger.info(
                 "Apply select: best of %d sample(s) — %s (score %.4f)",
                 len(ok_samples),
                 best.sample_point.value,
                 best.ecc_score,
             )
-        elif select == "median" and len(sorted_samples) >= 2:
-            last_resolved = self._median_resolved(sorted_samples, compose_bl)
-        else:
-            last_resolved = resolve_transform(
-                sorted_samples[-1], self.config, self._size, baseline=compose_bl
-            )
-
-        if not self._resolved_values_sane(last_resolved):
-            raise RuntimeError(
-                f"Refusing to apply insane transform (zoom={last_resolved.edit_zoom_x:.3f}, "
-                f"pan={last_resolved.edit_pan:.1f}, tilt={last_resolved.edit_tilt:.1f})"
-            )
-
-        for sample in sorted_samples:
-            if use_playhead:
-                self._seek(clip_start + sample.clip_local_frame)
-            self._set_edit_properties(item, last_resolved)
-
-        if last_resolved is None:
-            raise RuntimeError("No resolved transform.")
-        self.logger.info(
-            "Edit Inspector: %s — %d point(s) Zoom=%.4f Pan=%.1f Tilt=%.1f Rot=%.1f",
-            result.clip_name,
-            len(ok_samples),
-            last_resolved.edit_zoom_x,
-            last_resolved.edit_pan,
-            last_resolved.edit_tilt,
-            last_resolved.edit_rotation,
+            return resolved, [best]
+        if select == "median" and len(sorted_samples) >= 2:
+            return self._median_resolved(sorted_samples, compose_bl), sorted_samples
+        return (
+            resolve_transform(sorted_samples[-1], self.config, self._size, baseline=compose_bl),
+            sorted_samples,
         )
 
     def _apply_keyframes(

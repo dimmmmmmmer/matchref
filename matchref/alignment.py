@@ -446,9 +446,7 @@ def _pyramid_ecc(
         if warp is not None and last_mw > 0:
             warp = upscale_warp_translation(warp, mw / float(last_mw))
         if method == "auto" and feat_init is None:
-            feat = _align_features(off_u8, on_u8, config, ecc_mask)
-            if feat is not None and feat.warp_matrix is not None:
-                feat_init = feat.warp_matrix
+            feat_init = _feature_init_warp(off_u8, on_u8, config, ecc_mask)
         # `warp or feat_init` would evaluate the truthiness of a numpy array once
         # warp is set on the 2nd+ pyramid level — that raises ValueError. Pick the
         # carried-over warp explicitly, falling back to the feature init.
@@ -464,19 +462,40 @@ def _pyramid_ecc(
         and warp is not None
         and bool(config.get("refine_subpixel_translation", True))
     ):
-        on_full, off_full, _mask_full, _ = _prepare_match_pair(
-            online_frame,
-            offline_frame,
-            timeline_width,
-            config,
-        )
-        try:
-            warp = refine_warp_phase_correlation(off_full, on_full, warp)
-            best.warp_matrix = warp
-            best.message = "ok (pyramid+phase)"
-        except cv2.error:
-            pass
+        _polish_warp_subpixel(best, warp, online_frame, offline_frame, config, timeline_width)
     return best
+
+
+def _feature_init_warp(
+    off_u8: np.ndarray, on_u8: np.ndarray, config: AppConfig, mask: np.ndarray | None
+) -> np.ndarray | None:
+    """Feature-match warp used to seed the ECC search, if features find one."""
+    feat = _align_features(off_u8, on_u8, config, mask)
+    if feat is not None and feat.warp_matrix is not None:
+        return feat.warp_matrix
+    return None
+
+
+def _polish_warp_subpixel(
+    best: AlignmentResult,
+    warp: np.ndarray,
+    online_frame: np.ndarray,
+    offline_frame: np.ndarray,
+    config: AppConfig,
+    timeline_width: int,
+) -> None:
+    """Phase-correlation sub-pixel translation polish on the full-width pair (mutates ``best``)."""
+    on_full, off_full, _mask_full, _ = _prepare_match_pair(
+        online_frame,
+        offline_frame,
+        timeline_width,
+        config,
+    )
+    try:
+        best.warp_matrix = refine_warp_phase_correlation(off_full, on_full, warp)
+        best.message = "ok (pyramid+phase)"
+    except cv2.error:
+        pass
 
 
 def align_frames(
@@ -517,57 +536,68 @@ def align_frames(
             if pyramid is not None:
                 return pyramid
 
-        online_u8, offline_u8, ecc_mask, _crop = _prepare_match_pair(
-            online_frame,
-            offline_frame,
-            max_width,
-            config,
-        )
-
-        for err in (_validate_gray(offline_u8, "offline"), _validate_gray(online_u8, "online")):
-            if err:
-                result.message = err
-                return result
-
-        feat_mask = None
-        if ecc_mask is not None and online_u8.shape == ecc_mask.shape:
-            feat_mask = ecc_mask
-
-        feat_init = None
-        if method == "auto":
-            feat = _align_features(offline_u8, online_u8, config, feat_mask)
-            if feat is not None and feat.warp_matrix is not None:
-                feat_init = feat.warp_matrix
-
-        ecc_u8 = _try_ecc(offline_u8, online_u8, config, feat_init, ecc_mask)
-        if ecc_u8 is not None:
-            return ecc_u8
-
-        online_f = online_u8.astype(np.float32)
-        offline_f = offline_u8.astype(np.float32)
-        cv2.normalize(online_f, online_f, 0.0, 1.0, cv2.NORM_MINMAX)
-        cv2.normalize(offline_f, offline_f, 0.0, 1.0, cv2.NORM_MINMAX)
-
-        ecc_f = _try_ecc(offline_f, online_f, config, feat_init, None)
-        if ecc_f is not None:
-            return ecc_f
-
-        if method in ("features", "auto"):
-            feat = _align_features(offline_u8, online_u8, config, feat_mask)
-            if feat is not None:
-                return feat
-
-        if method == "features":
-            result.message = "feature matching failed"
-        elif method == "ecc":
-            result.message = "ECC failed on float and uint8"
-        else:
-            result.message = "ECC and feature matching failed"
+        return _align_single_scale(online_frame, offline_frame, config, max_width, method)
     except cv2.error as exc:
         result.message = str(exc)
     except Exception as exc:  # noqa: BLE001
         result.message = str(exc)
 
+    return result
+
+
+def _align_single_scale(
+    online_frame: np.ndarray,
+    offline_frame: np.ndarray,
+    config: AppConfig,
+    max_width: int,
+    method: str,
+) -> AlignmentResult:
+    """One-scale cascade: uint8 ECC → normalized-float ECC → feature matching."""
+    result = AlignmentResult()
+    online_u8, offline_u8, ecc_mask, _crop = _prepare_match_pair(
+        online_frame,
+        offline_frame,
+        max_width,
+        config,
+    )
+
+    for err in (_validate_gray(offline_u8, "offline"), _validate_gray(online_u8, "online")):
+        if err:
+            result.message = err
+            return result
+
+    feat_mask = None
+    if ecc_mask is not None and online_u8.shape == ecc_mask.shape:
+        feat_mask = ecc_mask
+
+    feat_init = None
+    if method == "auto":
+        feat_init = _feature_init_warp(offline_u8, online_u8, config, feat_mask)
+
+    ecc_u8 = _try_ecc(offline_u8, online_u8, config, feat_init, ecc_mask)
+    if ecc_u8 is not None:
+        return ecc_u8
+
+    online_f = online_u8.astype(np.float32)
+    offline_f = offline_u8.astype(np.float32)
+    cv2.normalize(online_f, online_f, 0.0, 1.0, cv2.NORM_MINMAX)
+    cv2.normalize(offline_f, offline_f, 0.0, 1.0, cv2.NORM_MINMAX)
+
+    ecc_f = _try_ecc(offline_f, online_f, config, feat_init, None)
+    if ecc_f is not None:
+        return ecc_f
+
+    if method in ("features", "auto"):
+        feat = _align_features(offline_u8, online_u8, config, feat_mask)
+        if feat is not None:
+            return feat
+
+    if method == "features":
+        result.message = "feature matching failed"
+    elif method == "ecc":
+        result.message = "ECC failed on float and uint8"
+    else:
+        result.message = "ECC and feature matching failed"
     return result
 
 

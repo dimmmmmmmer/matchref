@@ -87,11 +87,19 @@ def _read_setting(container: Any, key: str) -> str | None:
 
 def get_timeline_media_info(timeline: Any) -> TimelineMediaInfo:
     """Read playback FPS and resolution from the current Resolve timeline."""
-    from matchref.fps import normalize_fps
-
     info = TimelineMediaInfo()
     if timeline is None:
         return info
+    _read_timeline_fps(timeline, info)
+    _read_timeline_resolution(timeline, info)
+    _read_timeline_drop_frame(timeline, info)
+    _read_timeline_start_timecode(timeline, info)
+    return info
+
+
+def _read_timeline_fps(timeline: Any, info: TimelineMediaInfo) -> None:
+    """First readable FPS setting from the timeline, falling back to the project."""
+    from matchref.fps import normalize_fps
 
     fps_keys = (
         "timelineFrameRate",
@@ -100,17 +108,17 @@ def get_timeline_media_info(timeline: Any) -> TimelineMediaInfo:
         "TimelineFrameRate",
     )
     for source in (timeline, _project_from_timeline(timeline)):
-        if info.fps > 0:
-            break
         for key in fps_keys:
             raw = _read_setting(source, key)
             if raw:
                 try:
                     info.fps = normalize_fps(float(raw))
-                    break
+                    return
                 except ValueError:
                     continue
 
+
+def _read_timeline_resolution(timeline: Any, info: TimelineMediaInfo) -> None:
     for key, attr in (
         ("timelineResolutionWidth", "width"),
         ("timelineResolutionHeight", "height"),
@@ -124,12 +132,16 @@ def get_timeline_media_info(timeline: Any) -> TimelineMediaInfo:
                 except (TypeError, ValueError):
                     continue
 
+
+def _read_timeline_drop_frame(timeline: Any, info: TimelineMediaInfo) -> None:
     for source in (timeline, _project_from_timeline(timeline)):
         raw = _read_setting(source, "timelineDropFrameTimecode")
         if raw is not None:
             info.drop_frame = raw.lower() in ("1", "true", "yes")
-            break
+            return
 
+
+def _read_timeline_start_timecode(timeline: Any, info: TimelineMediaInfo) -> None:
     try:
         getter = getattr(timeline, "GetStartTimecode", None)
         if callable(getter):
@@ -138,8 +150,6 @@ def get_timeline_media_info(timeline: Any) -> TimelineMediaInfo:
                 info.start_timecode = str(tc).strip()
     except Exception:
         pass
-
-    return info
 
 
 def _project_from_timeline(timeline: Any) -> Any | None:

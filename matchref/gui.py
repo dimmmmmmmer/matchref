@@ -111,7 +111,17 @@ class MatchRefWindow(QMainWindow):
         root = QWidget()
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
+        layout.addWidget(self._build_reference_group())
+        layout.addWidget(self._build_conform_group())
+        layout.addWidget(self._build_selection_group())
+        layout.addWidget(self._build_match_options_group())
+        layout.addLayout(self._build_debug_row())
+        layout.addLayout(self._build_threshold_row())
+        layout.addWidget(self._build_advanced_group())
+        layout.addLayout(self._build_action_row())
+        self._build_status_area(layout)
 
+    def _build_reference_group(self) -> QGroupBox:
         ref_group = QGroupBox("Offline Reference")
         ref_layout = QHBoxLayout(ref_group)
         self.ref_path_edit = QLineEdit()
@@ -119,8 +129,9 @@ class MatchRefWindow(QMainWindow):
         browse_btn.clicked.connect(self._browse_reference)
         ref_layout.addWidget(self.ref_path_edit)
         ref_layout.addWidget(browse_btn)
-        layout.addWidget(ref_group)
+        return ref_group
 
+    def _build_conform_group(self) -> QGroupBox:
         conform_group = QGroupBox("Conform EDL / XML (optional)")
         conform_layout = QHBoxLayout(conform_group)
         self.conform_path_edit = QLineEdit()
@@ -128,8 +139,9 @@ class MatchRefWindow(QMainWindow):
         conform_browse = QPushButton("Browse")
         conform_browse.clicked.connect(self._browse_conform)
         conform_layout.addWidget(conform_browse)
-        layout.addWidget(conform_group)
+        return conform_group
 
+    def _build_selection_group(self) -> QGroupBox:
         select_group = QGroupBox("Clips to process")
         select_layout = QGridLayout(select_group)
         select_layout.addWidget(QLabel("Pick by"), 0, 0)
@@ -148,8 +160,9 @@ class MatchRefWindow(QMainWindow):
         self.selection_track_spin = QSpinBox()
         self.selection_track_spin.setRange(1, 99)
         select_layout.addWidget(self.selection_track_spin, 2, 1)
-        layout.addWidget(select_group)
+        return select_group
 
+    def _build_match_options_group(self) -> QGroupBox:
         toggles = QGroupBox("Match Options")
         toggle_layout = QGridLayout(toggles)
         self.match_scale_cb = QCheckBox("Match Scale")
@@ -173,8 +186,9 @@ class MatchRefWindow(QMainWindow):
         toggle_layout.addWidget(self.use_mid_cb, 1, 1)
         toggle_layout.addWidget(self.dry_run_cb, 2, 0, 1, 2)
         toggle_layout.addWidget(self.debug_cb, 3, 0, 1, 2)
-        layout.addWidget(toggles)
+        return toggles
 
+    def _build_debug_row(self) -> QHBoxLayout:
         debug_row = QHBoxLayout()
         debug_row.addWidget(QLabel("Debug folder"))
         self.debug_dir_edit = QLineEdit()
@@ -183,8 +197,9 @@ class MatchRefWindow(QMainWindow):
         self.debug_open_btn = QPushButton("Open")
         self.debug_open_btn.clicked.connect(self._open_debug_folder)
         debug_row.addWidget(self.debug_open_btn)
-        layout.addLayout(debug_row)
+        return debug_row
 
+    def _build_threshold_row(self) -> QHBoxLayout:
         threshold_row = QHBoxLayout()
         threshold_row.addWidget(QLabel("ECC Threshold"))
         self.ecc_threshold_spin = QDoubleSpinBox()
@@ -194,8 +209,9 @@ class MatchRefWindow(QMainWindow):
         self.ecc_threshold_spin.setValue(0.85)
         threshold_row.addWidget(self.ecc_threshold_spin)
         threshold_row.addStretch()
-        layout.addLayout(threshold_row)
+        return threshold_row
 
+    def _build_advanced_group(self) -> QGroupBox:
         advanced = QGroupBox("Advanced (experimental — validate in Resolve)")
         adv_layout = QGridLayout(advanced)
         self.fusion_cb = QCheckBox("Keyframe animated clips via Fusion")
@@ -208,8 +224,9 @@ class MatchRefWindow(QMainWindow):
         self.ref_tc_edit = QLineEdit()
         self.ref_tc_edit.setPlaceholderText("e.g. 01:00:00:00 (optional, for auto-align)")
         adv_layout.addWidget(self.ref_tc_edit, 3, 1)
-        layout.addWidget(advanced)
+        return advanced
 
+    def _build_action_row(self) -> QHBoxLayout:
         action_row = QHBoxLayout()
         self.run_btn = QPushButton("Run MatchRef")
         self.run_btn.clicked.connect(self._on_run)
@@ -218,8 +235,9 @@ class MatchRefWindow(QMainWindow):
         self.cancel_btn.clicked.connect(self._on_cancel)
         action_row.addWidget(self.run_btn)
         action_row.addWidget(self.cancel_btn)
-        layout.addLayout(action_row)
+        return action_row
 
+    def _build_status_area(self, layout: QVBoxLayout) -> None:
         self.status_label = QLabel("Ready")
         self.status_label.setStyleSheet("color: #444;")
         layout.addWidget(self.status_label)

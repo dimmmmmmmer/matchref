@@ -57,12 +57,8 @@ def _parse_rational_time(value: str | None, fps: float) -> int:
     return 0
 
 
-def _parse_fcpxml(root: ET.Element, default_fps: float) -> XmlParseResult:
-    result = XmlParseResult(timecode_format=TimecodeFormat(fps=default_fps))
-    sequence = root.find(".//sequence")
-    if sequence is None:
-        return result
-
+def _parse_fcpxml_header(sequence: ET.Element, result: XmlParseResult) -> None:
+    """Read the sequence format (fps, title) and start timecode into ``result``."""
     fmt_node = sequence.find("format")
     if fmt_node is not None:
         frame_duration = fmt_node.get("frameDuration", "")
@@ -72,7 +68,6 @@ def _parse_fcpxml(root: ET.Element, default_fps: float) -> XmlParseResult:
                 result.timecode_format = TimecodeFormat(fps=float(num) / float(den))
         result.title = sequence.get("name", "") or result.title
 
-    fps = result.timecode_format.fps
     tc_start = sequence.find("timecode")
     if tc_start is not None and tc_start.get("value"):
         try:
@@ -82,6 +77,39 @@ def _parse_fcpxml(root: ET.Element, default_fps: float) -> XmlParseResult:
         except ValueError:
             result.sequence_start_frames = 0
 
+
+def _fcpxml_clip_event(
+    root: ET.Element, child: ET.Element, rec_in: int, duration: int, fps: float, number: int
+) -> EdlEvent:
+    """Build the conform event for one spine clip element."""
+    start = _parse_rational_time(child.get("start"), fps)
+    name = child.get("name", "") or child.get("ref", "UNKNOWN")
+    reel = name
+    asset = root.find(f".//asset[@id='{child.get('ref', '')}']")
+    if asset is not None:
+        reel = asset.get("name", reel) or reel
+    return EdlEvent(
+        event_number=number,
+        reel=reel,
+        track="V",
+        transition="C",
+        src_in=start,
+        src_out=start + duration,
+        rec_in=rec_in,
+        rec_out=rec_in + duration,
+        clip_name=name,
+    )
+
+
+def _parse_fcpxml(root: ET.Element, default_fps: float) -> XmlParseResult:
+    result = XmlParseResult(timecode_format=TimecodeFormat(fps=default_fps))
+    sequence = root.find(".//sequence")
+    if sequence is None:
+        return result
+
+    _parse_fcpxml_header(sequence, result)
+    fps = result.timecode_format.fps
+
     spine = sequence.find(".//spine")
     if spine is None:
         return result
@@ -89,42 +117,19 @@ def _parse_fcpxml(root: ET.Element, default_fps: float) -> XmlParseResult:
     record_cursor = result.sequence_start_frames
     for child in list(spine):
         tag = child.tag.split("}")[-1].lower()
+        offset = _parse_rational_time(child.get("offset"), fps)
+        duration = _parse_rational_time(child.get("duration"), fps)
         if tag in ("gap", "spine"):
-            offset = _parse_rational_time(child.get("offset"), fps)
-            duration = _parse_rational_time(child.get("duration"), fps)
             record_cursor += offset + duration
             continue
         if tag not in ("clip", "asset-clip", "video", "ref-clip", "sync-clip"):
             continue
 
-        duration = _parse_rational_time(child.get("duration"), fps)
-        offset = _parse_rational_time(child.get("offset"), fps)
-        start = _parse_rational_time(child.get("start"), fps)
-        rec_in = record_cursor + offset
-        rec_out = rec_in + duration
-        src_in = start
-        src_out = start + duration
-
-        name = child.get("name", "") or child.get("ref", "UNKNOWN")
-        reel = name
-        asset = root.find(f".//asset[@id='{child.get('ref', '')}']")
-        if asset is not None:
-            reel = asset.get("name", reel) or reel
-
-        result.events.append(
-            EdlEvent(
-                event_number=len(result.events) + 1,
-                reel=reel,
-                track="V",
-                transition="C",
-                src_in=src_in,
-                src_out=src_out,
-                rec_in=rec_in,
-                rec_out=rec_out,
-                clip_name=name,
-            )
+        event = _fcpxml_clip_event(
+            root, child, record_cursor + offset, duration, fps, len(result.events) + 1
         )
-        record_cursor = max(record_cursor, rec_out)
+        result.events.append(event)
+        record_cursor = max(record_cursor, event.rec_out)
 
     return result
 

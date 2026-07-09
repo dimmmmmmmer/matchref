@@ -49,6 +49,11 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
+      # PySide6 needs GL/EGL system libraries even for the offscreen platform
+      # used by the GUI smoke test (tests/test_gui_smoke.py).
+      - name: Install Qt system libraries
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
