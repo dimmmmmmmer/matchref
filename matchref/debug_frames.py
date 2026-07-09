@@ -92,28 +92,8 @@ def save_match_debug(
     image_path = base / "compare_online_vs_offline.jpg"
     cv2.imwrite(str(image_path), compare)
 
-    diff_line = ""
-    if result_render is not None:
-        # [applied transform result | offline] — this is what Resolve should show.
-        cv2.imwrite(
-            str(base / "result_vs_offline.jpg"),
-            _stack_horizontal(result_render, offline_ref),
-        )
-        # Difference map: grade-normalised (CLAHE) grayscale |result - offline|.
-        # Dark = aligned. The fraction of near-black pixels is a quick "did it lock"
-        # number that ignores colour grade and shows residual geometric error.
-        diff, near_black = _normalized_difference(result_render, offline_ref)
-        cv2.imwrite(str(base / "difference.jpg"), diff)
-        diff_line = f"difference: {near_black * 100:.1f}% near-black (higher = better aligned)"
-
-    raw_line = ""
-    if online_raw is not None:
-        cv2.imwrite(str(base / "online_raw_source.jpg"), online_raw)
-        rh, rw = online_raw.shape[:2]
-        fh, fw = online_for_match.shape[:2]
-        raw_line = (
-            f"online_raw_source: {rw}x{rh} (native source, before fit) → fit canvas {fw}x{fh}"
-        )
+    diff_line = _write_result_images(base, result_render, offline_ref)
+    raw_line = _write_raw_image(base, online_raw, online_for_match)
     cv2.imwrite(str(base / "online_for_match.jpg"), online_for_match)
     cv2.imwrite(str(base / "offline_reference.jpg"), offline_ref)
 
@@ -134,6 +114,37 @@ def save_match_debug(
     info_path = base / "comparison.txt"
     info_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return str(image_path)
+
+
+def _write_result_images(
+    base: Path, result_render: np.ndarray | None, offline_ref: np.ndarray
+) -> str:
+    """Write the applied-result stack + difference map; returns the manifest line."""
+    if result_render is None:
+        return ""
+    # [applied transform result | offline] — this is what Resolve should show.
+    cv2.imwrite(
+        str(base / "result_vs_offline.jpg"),
+        _stack_horizontal(result_render, offline_ref),
+    )
+    # Difference map: grade-normalised (CLAHE) grayscale |result - offline|.
+    # Dark = aligned. The fraction of near-black pixels is a quick "did it lock"
+    # number that ignores colour grade and shows residual geometric error.
+    diff, near_black = _normalized_difference(result_render, offline_ref)
+    cv2.imwrite(str(base / "difference.jpg"), diff)
+    return f"difference: {near_black * 100:.1f}% near-black (higher = better aligned)"
+
+
+def _write_raw_image(
+    base: Path, online_raw: np.ndarray | None, online_for_match: np.ndarray
+) -> str:
+    """Write the native-source frame; returns the manifest line."""
+    if online_raw is None:
+        return ""
+    cv2.imwrite(str(base / "online_raw_source.jpg"), online_raw)
+    rh, rw = online_raw.shape[:2]
+    fh, fw = online_for_match.shape[:2]
+    return f"online_raw_source: {rw}x{rh} (native source, before fit) → fit canvas {fw}x{fh}"
 
 
 def format_sample_compare_line(

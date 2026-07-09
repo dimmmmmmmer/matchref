@@ -35,32 +35,54 @@ def validate_against_timeline(
     log.info("Hub resolution (Resolve timeline): %dx%d", timeline.width, timeline.height)
 
     path = offline_reference_path.strip() or str(config.get("offline_reference_path", "")).strip()
-    ref_fps = 0.0
-    ref_w = ref_h = 0
-    if path:
-        probe = probe_video(path)
-        ref_fps = probe.fps
-        ref_w, ref_h = probe.width, probe.height
-        if ref_fps > 0:
-            log.info("Lock-cut reference file FPS: %s", format_fps(ref_fps))
-        if ref_w > 0 and ref_h > 0:
-            log.info("Lock-cut reference file: %dx%d", ref_w, ref_h)
+    ref_fps, ref_w, ref_h = _probe_reference(path, log)
 
     conform_fps = 0.0
     if conform is not None and conform.is_available:
         conform_fps = float(conform.timecode_format.fps)
         log.info("Conform EDL/XML FPS: %s", format_fps(conform_fps))
 
-    if ref_w > 0 and ref_h > 0 and (ref_w != timeline.width or ref_h != timeline.height):
-        msg = (
-            f"Reference {ref_w}x{ref_h} vs timeline {timeline.width}x{timeline.height} — "
-            "hub frame indices follow Resolve; images are scaled for matching."
-        )
-        if bool(config.get("require_resolution_match", False)):
-            raise FpsMismatchError(msg)
-        if bool(config.get("warn_resolution_mismatch", True)):
-            log.warning(msg)
+    _check_resolution(timeline, config, ref_w, ref_h, log)
+    _check_fps(hub, conform_fps, ref_fps, tolerance, strict, log)
 
+
+def _probe_reference(path: str, log: logging.Logger) -> tuple[float, int, int]:
+    """(fps, width, height) of the lock-cut reference file; zeros when unknown."""
+    if not path:
+        return 0.0, 0, 0
+    probe = probe_video(path)
+    if probe.fps > 0:
+        log.info("Lock-cut reference file FPS: %s", format_fps(probe.fps))
+    if probe.width > 0 and probe.height > 0:
+        log.info("Lock-cut reference file: %dx%d", probe.width, probe.height)
+    return probe.fps, probe.width, probe.height
+
+
+def _check_resolution(
+    timeline: TimelineContext, config: AppConfig, ref_w: int, ref_h: int, log: logging.Logger
+) -> None:
+    """Raise or warn when the reference resolution differs from the timeline."""
+    if not (ref_w > 0 and ref_h > 0 and (ref_w != timeline.width or ref_h != timeline.height)):
+        return
+    msg = (
+        f"Reference {ref_w}x{ref_h} vs timeline {timeline.width}x{timeline.height} — "
+        "hub frame indices follow Resolve; images are scaled for matching."
+    )
+    if bool(config.get("require_resolution_match", False)):
+        raise FpsMismatchError(msg)
+    if bool(config.get("warn_resolution_mismatch", True)):
+        log.warning(msg)
+
+
+def _check_fps(
+    hub: float,
+    conform_fps: float,
+    ref_fps: float,
+    tolerance: float,
+    strict: bool,
+    log: logging.Logger,
+) -> None:
+    """Raise (strict) or warn when conform / reference FPS differ from the hub."""
     mismatches: list[str] = []
     if conform_fps > 0 and not fps_near_equal(conform_fps, hub, tolerance):
         mismatches.append(f"Conform: {format_fps(conform_fps)} ≠ timeline {format_fps(hub)}")
