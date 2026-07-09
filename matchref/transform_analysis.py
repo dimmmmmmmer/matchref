@@ -105,6 +105,10 @@ class _SampleFrames:
     compare_line: str = ""
     clamped_src: int = 0
     absolute: bool = False
+    # Alignment-derived thresholds, filled in by _process_sample once the sample
+    # is aligned; carried here so the reject/debug helpers don't re-derive them.
+    admit: float = 0.0
+    apply_floor: float = 0.0
 
 
 class TransformAnalyzer:
@@ -592,8 +596,6 @@ class TransformAnalyzer:
         point: Any,
         loaded: _SampleFrames,
         alignment: Any,
-        admit: float,
-        apply_floor: float,
         message: str,
         warning: str,
     ) -> TransformSample:
@@ -602,7 +604,7 @@ class TransformAnalyzer:
         sample.message = message
         ctx.result.samples.append(sample)
         ctx.result.warnings.append(f"{point.value}: {warning}")
-        self._save_match_debug(ctx, point, loaded, alignment, admit, apply_floor)
+        self._save_match_debug(ctx, point, loaded, alignment)
         return sample
 
     def _passes_admission(
@@ -611,11 +613,10 @@ class TransformAnalyzer:
         point: Any,
         loaded: _SampleFrames,
         alignment: Any,
-        admit: float,
-        apply_floor: float,
         can_refine: bool,
     ) -> bool:
         """Gate on the ECC admission score; a refine-worthy near-miss may proceed."""
+        admit = loaded.admit
         if alignment.ecc_score >= admit:
             return True
         min_refine_ecc = min_ecc_for_refine_attempt(self.config)
@@ -633,12 +634,10 @@ class TransformAnalyzer:
             point,
             loaded,
             alignment,
-            admit,
-            apply_floor,
             message=f"score below admission ({alignment.ecc_score:.4f} < {admit:.2f})",
             warning=(
                 f"ECC {alignment.ecc_score:.4f} < {admit:.2f} "
-                f"(refine needs >= {min_refine_ecc:.2f}, apply {apply_floor:.2f})"
+                f"(refine needs >= {min_refine_ecc:.2f}, apply {loaded.apply_floor:.2f})"
             ),
         )
         return False
@@ -743,8 +742,6 @@ class TransformAnalyzer:
         loaded: _SampleFrames,
         alignment: Any,
         warp: Any,
-        admit: float,
-        apply_floor: float,
         should_cancel: Callable[[], bool] | None,
     ) -> TransformSample | None:
         """Refine to Edit parameters; returns the recorded sample on rejection, None when accepted."""
@@ -763,7 +760,7 @@ class TransformAnalyzer:
         self._stash_ecc_candidate(ctx, loaded.sample, alignment)
         message = "refine rejected: " + "; ".join(reasons)
         return self._record_sample_reject(
-            ctx, point, loaded, alignment, admit, apply_floor, message=message, warning=message
+            ctx, point, loaded, alignment, message=message, warning=message
         )
 
     def _accept_sample(
@@ -828,8 +825,8 @@ class TransformAnalyzer:
 
         alignment = self._align_sample(ctx, loaded)
         sample.ecc_score = alignment.ecc_score
-        admit = alignment_admission_threshold(alignment, self.config)
-        apply_floor = float(self.config.get("min_match_score", 0.95))
+        loaded.admit = alignment_admission_threshold(alignment, self.config)
+        loaded.apply_floor = float(self.config.get("min_match_score", 0.95))
         can_refine = (
             bool(self.config.get("resolve_edit_refine", True))
             and is_maximum_precision(self.config)
@@ -842,9 +839,7 @@ class TransformAnalyzer:
             ctx.result.warnings.append(f"{point.value}: match failed ({alignment.message})")
             return sample
 
-        if not self._passes_admission(
-            ctx, point, loaded, alignment, admit, apply_floor, can_refine
-        ):
+        if not self._passes_admission(ctx, point, loaded, alignment, can_refine):
             return sample
 
         warp = self._timeline_warp(alignment)
@@ -852,15 +847,13 @@ class TransformAnalyzer:
 
         skip_refine = self._refine_skipped_by_score(ctx, point, alignment)
         if can_refine and warp is not None and not skip_refine:
-            assert loaded.online_raw is not None  # can_refine implies online_raw is not None
-            rejected = self._refine_sample(
-                ctx, point, loaded, alignment, warp, admit, apply_floor, should_cancel
-            )
+            # can_refine already implies loaded.online_raw is not None
+            rejected = self._refine_sample(ctx, point, loaded, alignment, warp, should_cancel)
             if rejected is not None:
                 return rejected
 
         self._accept_sample(ctx, point, loaded, alignment)
-        self._save_match_debug(ctx, point, loaded, alignment, admit, apply_floor)
+        self._save_match_debug(ctx, point, loaded, alignment)
         return sample
 
     def _should_stop_after(self, ctx: _ClipContext, sample: TransformSample) -> bool:
@@ -996,8 +989,9 @@ class TransformAnalyzer:
             )
 
     def _finalize_best_select(self, ctx: _ClipContext, ok_samples: list[TransformSample]) -> None:
-        """Keep the single best-matching sample; validate only its scale (the
-        others may be weaker frames — we just don't use them). No keyframing."""
+        """Keep the single best-matching sample; no keyframing unless it's a real ramp."""
+        # Only the best sample's scale is validated — the others may be weaker
+        # frames (motion blur, occlusion); we just don't use them.
         result = ctx.result
         best = max(ok_samples, key=lambda s: s.ecc_score)
         select_reasons, animated = self._best_select_problems(ctx, ok_samples, best)
@@ -1095,8 +1089,6 @@ class TransformAnalyzer:
         point: Any,
         loaded: _SampleFrames,
         alignment: Any,
-        admit: float,
-        apply_floor: float,
     ) -> None:
         if self._debug_dir is None:
             return
@@ -1105,12 +1097,12 @@ class TransformAnalyzer:
             via = sample.accept_via or "score"
             match_line = (
                 f"match: OK [{via}] scale={sample.scale:.4f} rot={sample.rotation_deg:.2f} "
-                f"ecc={sample.ecc_score:.4f} (apply min {apply_floor:.2f}) — {sample.message}"
+                f"ecc={sample.ecc_score:.4f} (apply min {loaded.apply_floor:.2f}) — {sample.message}"
             )
         else:
             match_line = (
                 f"match: FAIL ecc={alignment.ecc_score:.4f} "
-                f"(admit {admit:.2f}, apply {apply_floor:.2f}) — {sample.message}"
+                f"(admit {loaded.admit:.2f}, apply {loaded.apply_floor:.2f}) — {sample.message}"
             )
 
         # Render exactly what gets written to the Inspector and stack it against the

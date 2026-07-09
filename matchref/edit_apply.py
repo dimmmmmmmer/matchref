@@ -131,7 +131,7 @@ class EditTransformApplier:
                 pass
 
     def _apply_via_alternate_backend(self, item: Any, result: ClipAnalysisResult) -> bool:
-        """CornerPin / Fusion Transform backends; True when one handled the clip."""
+        """Perspective and Fusion backends; True when one of them handled the clip."""
         # Perspective match is applied as a Fusion CornerPin (Edit can't do it) when
         # perspective_match_enabled and a homography was solved.
         from matchref.cornerpin_apply import CornerPinApplier, should_use_cornerpin

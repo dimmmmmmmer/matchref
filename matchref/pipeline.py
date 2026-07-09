@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from matchref.config import AppConfig
@@ -14,6 +15,18 @@ from matchref.models import AnalysisReport, ClipAnalysisResult
 from matchref.resolve_api import connect_resolve, get_project_context
 from matchref.timeline_context import TimelineContext
 from matchref.transform_analysis import TransformAnalyzer, _clip_name
+
+
+@dataclass
+class _RunState:
+    """Workers, callbacks and accumulators shared by the per-clip processing loop."""
+
+    analyzer: TransformAnalyzer
+    applier: EditTransformApplier | None
+    report: AnalysisReport
+    dry_run: bool
+    on_message: Callable[[str], None] | None
+    should_cancel: Callable[[], bool] | None
 
 
 class MatchRefPipeline:
@@ -49,6 +62,14 @@ class MatchRefPipeline:
         analyzer, applier = self._build_workers(dry_run)
 
         report = AnalysisReport()
+        run = _RunState(
+            analyzer=analyzer,
+            applier=applier,
+            report=report,
+            dry_run=dry_run,
+            on_message=on_message,
+            should_cancel=should_cancel,
+        )
 
         try:
             filtered, skipped = analyzer.prepare_batch(clips)
@@ -62,17 +83,7 @@ class MatchRefPipeline:
                 if should_cancel and should_cancel():
                     self._emit(on_message, "Stopped by user.")
                     break
-                if not self._process_clip(
-                    on_message,
-                    should_cancel,
-                    analyzer,
-                    applier,
-                    report,
-                    item,
-                    index,
-                    total,
-                    dry_run,
-                ):
+                if not self._process_clip(run, item, index, total):
                     self._emit(on_message, "Stopped by user.")
                     break
 
@@ -92,8 +103,8 @@ class MatchRefPipeline:
         """Connect (if needed) and resolve the clip selection; raises when empty."""
         if self.timeline is None:
             self.connect()
-        assert self.timeline is not None
-        assert self.resolve is not None
+        if self.timeline is None or self.resolve is None:
+            raise RuntimeError("Not connected to DaVinci Resolve.")
         if self.timeline_ctx is None:
             self.timeline_ctx = TimelineContext.from_resolve(self.timeline)
 
@@ -111,8 +122,8 @@ class MatchRefPipeline:
         self, dry_run: bool
     ) -> tuple[TransformAnalyzer, EditTransformApplier | None]:
         """Analyzer + (unless dry run) applier bound to the connected timeline."""
-        assert self.timeline_ctx is not None
-        assert self.resolve is not None
+        if self.timeline_ctx is None or self.resolve is None:
+            raise RuntimeError("Not connected to DaVinci Resolve.")
         analyzer = TransformAnalyzer(
             self.config,
             self.timeline_ctx,
@@ -133,7 +144,8 @@ class MatchRefPipeline:
         self, on_message: Callable[[str], None] | None, clip_count: int, source: str
     ) -> None:
         """Describe the run (clip count, hub format, debug dir, conform warning)."""
-        assert self.timeline_ctx is not None
+        if self.timeline_ctx is None:
+            raise RuntimeError("Not connected to DaVinci Resolve.")
         self._emit(on_message, f"Clips: {clip_count} ({source})")
         self._emit(
             on_message,
@@ -161,44 +173,33 @@ class MatchRefPipeline:
         for reason in skipped[:10]:
             self._emit(on_message, f"  • {reason}")
 
-    def _process_clip(
-        self,
-        on_message: Callable[[str], None] | None,
-        should_cancel: Callable[[], bool] | None,
-        analyzer: TransformAnalyzer,
-        applier: EditTransformApplier | None,
-        report: AnalysisReport,
-        item: Any,
-        index: int,
-        total: int,
-        dry_run: bool,
-    ) -> bool:
+    def _process_clip(self, run: _RunState, item: Any, index: int, total: int) -> bool:
         """Analyze one clip, record it, and apply when valid. False = cancelled mid-clip."""
         name = _clip_name(item)
-        self._emit(on_message, f"[{index}/{total}] Analyzing: {name}")
+        self._emit(run.on_message, f"[{index}/{total}] Analyzing: {name}")
 
-        result = analyzer.analyze_one(item, should_cancel=should_cancel)
-        if should_cancel and should_cancel():
+        result = run.analyzer.analyze_one(item, should_cancel=run.should_cancel)
+        if run.should_cancel and run.should_cancel():
             return False
         if result is None:
-            self._emit(on_message, "  Skipped (no media).")
+            self._emit(run.on_message, "  Skipped (no media).")
             return True
 
-        report.results.append(result)
-        self._summarize_clip(on_message, result)
+        run.report.results.append(result)
+        self._summarize_clip(run.on_message, result)
 
-        if dry_run:
+        if run.dry_run:
             return True
 
-        if result.is_valid and applier is not None:
-            self._emit(on_message, "  Applying transform…")
+        if result.is_valid and run.applier is not None:
+            self._emit(run.on_message, "  Applying transform…")
             try:
-                applier.apply_clip(result)
-                self._emit(on_message, f"  Applied: {name}")
+                run.applier.apply_clip(result)
+                self._emit(run.on_message, f"  Applied: {name}")
             except Exception as exc:  # noqa: BLE001
-                self._emit(on_message, f"  Apply failed: {exc}")
+                self._emit(run.on_message, f"  Apply failed: {exc}")
         elif result.problem:
-            self._emit(on_message, "  Not applied (problem clip).")
+            self._emit(run.on_message, "  Not applied (problem clip).")
         return True
 
     def _summarize_clip(
