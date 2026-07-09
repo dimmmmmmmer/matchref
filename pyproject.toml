@@ -21,6 +21,18 @@ ignore = [
 [tool.pytest.ini_options]
 pythonpath = ["."]   # make the `matchref` package importable without installing it
 
+[tool.bandit]
+# Codacy runs Bandit with this config. Findings triaged 2026-07-09:
+# - B110/B112 (try/except pass|continue): deliberate defensive wrappers around
+#   the DaVinci Resolve scripting API, which raises unpredictably per build.
+# - B404/B603/B606/B607 (subprocess): fixed argv-list commands only — opening
+#   the debug folder ("open"/xdg-open) and launching the bundled venv python.
+#   No shell, no user-controlled input.
+# - B314/B405 (xml.etree parse): conform EDL/XML files are local files the
+#   artist picks in the GUI, not untrusted network input.
+# B101 (assert in package code) intentionally stays enabled.
+skips = ["B110", "B112", "B404", "B603", "B606", "B607", "B314", "B405"]
+
 [tool.mypy]
 # No python_version pin: mypy checks against the running interpreter. Pinning
 # 3.10 breaks under new interpreters — numpy ≥2.5 stubs use PEP 695 `type`

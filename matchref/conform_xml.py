@@ -23,7 +23,10 @@ class XmlParseResult:
 
 
 def parse_conform_xml(path: str | Path, default_fps: float = 24.0) -> XmlParseResult:
-    root = ET.parse(path).getroot()
+    # Local conform file picked by the artist in the GUI — not untrusted input.
+    root = ET.parse(  # nosemgrep: python.lang.security.use-defused-xml-parse.use-defused-xml-parse
+        path
+    ).getroot()
     tag = root.tag.lower()
     if (
         "fcpxml" in tag
