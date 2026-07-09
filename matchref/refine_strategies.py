@@ -44,7 +44,6 @@ class RefineOutcome:
 @dataclass
 class _RefineContext:
     online_raw: np.ndarray
-    offline_fit: np.ndarray
     canvas_size: tuple[int, int]
     config: AppConfig
     min_zoom: float
@@ -153,7 +152,6 @@ def refine_with_strategy_order(
 def refine_multi_strategy(
     *,
     online_raw: np.ndarray,
-    offline_fit: np.ndarray,
     canvas_size: tuple[int, int],
     config: AppConfig,
     initial: ClipEditTransform,
@@ -161,7 +159,7 @@ def refine_multi_strategy(
     score_fn: Callable[[np.ndarray], float],
     should_cancel: Callable[[], bool] | None = None,
 ) -> RefineOutcome:
-    ctx = _build_refine_context(online_raw, offline_fit, canvas_size, config, cost_fn, score_fn)
+    ctx = _build_refine_context(online_raw, canvas_size, config, cost_fn, score_fn)
     start = [
         float(initial.zoom_x),
         float(initial.pan),
@@ -194,7 +192,6 @@ def _steps_from_config(config: AppConfig, key: str, default: list[float]) -> lis
 
 def _build_refine_context(
     online_raw: np.ndarray,
-    offline_fit: np.ndarray,
     canvas_size: tuple[int, int],
     config: AppConfig,
     cost_fn: Callable[[list[float]], float],
@@ -205,7 +202,6 @@ def _build_refine_context(
     pan_lim = max(width, height) * float(config.get("refine_pan_limit_scale", 1.5))
     return _RefineContext(
         online_raw=online_raw,
-        offline_fit=offline_fit,
         canvas_size=canvas_size,
         config=config,
         min_zoom=float(config.get("refine_zoom_min", 0.25)),

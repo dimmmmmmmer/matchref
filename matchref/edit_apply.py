@@ -289,14 +289,15 @@ class EditTransformApplier:
         target = max(0, int(timeline_frame))
         tc = format_timecode(target, fmt)
         try:
-            setter(tc)
+            # _callable guarantees this is callable; pylint can't see through it.
+            setter(tc)  # pylint: disable=not-callable
         except Exception:
             return False
         getter = _callable(timeline, "GetCurrentTimecode")
         if getter is None:
             return True  # can't verify on this build — trust the setter
         try:
-            actual = parse_timecode(str(getter()), fmt)
+            actual = parse_timecode(str(getter()), fmt)  # pylint: disable=not-callable
         except (ValueError, TypeError):
             return True
         return abs(actual - target) <= 1

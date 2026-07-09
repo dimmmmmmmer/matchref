@@ -106,7 +106,7 @@ def solve_homography(
     """
     import cv2
 
-    from matchref.alignment import _match_size, prepare_gray_uint8
+    from matchref.frame_prep import _match_size, prepare_gray_uint8
 
     tw = max(1, int(timeline_size[0]))
     cap = int(config.get("refine_max_width", 1920))

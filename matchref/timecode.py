@@ -88,18 +88,22 @@ def _frames_to_drop_frame(frame: int) -> str:
     return f"{hh:02d}:{mm:02d}:{s:02d};{ff:02d}"
 
 
+# Checked in order: the first marker found in the FCM/header line wins.
+_EDL_HEADER_FPS: tuple[tuple[str, float], ...] = (
+    ("29.97", 29.97),
+    ("30", 30.0),
+    ("25", 25.0),
+    ("24", 24.0),
+    ("23.976", 23.976),
+    ("23.98", 23.976),
+)
+
+
 def infer_fps_from_edl_header(line: str, default: float) -> TimecodeFormat:
     upper = line.upper()
     if "DROP FRAME" in upper and "NON-DROP" not in upper:
         return TimecodeFormat(fps=29.97, drop_frame=True)
-    if "29.97" in upper:
-        return TimecodeFormat(fps=29.97, drop_frame=False)
-    if "30" in upper:
-        return TimecodeFormat(fps=30.0, drop_frame=False)
-    if "25" in upper:
-        return TimecodeFormat(fps=25.0, drop_frame=False)
-    if "24" in upper:
-        return TimecodeFormat(fps=24.0, drop_frame=False)
-    if "23.976" in upper or "23.98" in upper:
-        return TimecodeFormat(fps=23.976, drop_frame=False)
+    for marker, fps in _EDL_HEADER_FPS:
+        if marker in upper:
+            return TimecodeFormat(fps=fps, drop_frame=False)
     return TimecodeFormat(fps=default, drop_frame=False)

@@ -62,7 +62,8 @@ def _show_error(title: str, message: str) -> None:
     try:
         from PySide6.QtWidgets import QApplication, QMessageBox
 
-        QApplication.instance() or QApplication([])
+        if QApplication.instance() is None:
+            QApplication([])
         QMessageBox.critical(None, title, message)
     except Exception:
         try:
