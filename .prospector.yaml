@@ -1,0 +1,8 @@
+# Codacy runs Prospector over the repo. Its pydocstyle pass enforces docstring
+# layout rules (D203, D205, D212/D213, …) that contradict both this codebase's
+# convention (summary on the first line) and the ruff formatter, which strips
+# the blank line D203 demands — the two can never both be satisfied. Docstring
+# style here is governed by review and ruff; disable the checker instead of
+# fighting it line by line.
+pydocstyle:
+  run: false
