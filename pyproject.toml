@@ -21,6 +21,9 @@ ignore = [
 [tool.pytest.ini_options]
 pythonpath = ["."]   # make the `matchref` package importable without installing it
 
+[tool.coverage.run]
+source = ["matchref"]
+
 [tool.bandit]
 # Codacy runs Bandit with this config. Findings triaged 2026-07-09:
 # - B110/B112 (try/except pass|continue): deliberate defensive wrappers around

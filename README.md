@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/dimmmmmmmer/matchref/actions/workflows/ci.yml/badge.svg)](https://github.com/dimmmmmmmer/matchref/actions/workflows/ci.yml)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/8d6111c7164745968372545ab35ce8c2)](https://app.codacy.com/gh/dimmmmmmmer/matchref/dashboard)
+[![Coverage](https://app.codacy.com/project/badge/Coverage/8d6111c7164745968372545ab35ce8c2)](https://app.codacy.com/gh/dimmmmmmmer/matchref/coverage)
 
 A tool for **DaVinci Resolve Studio 20+** that rebuilds clip transforms
 (Zoom, Pan, Tilt, Rotation) on your conformed timeline to match an **offline

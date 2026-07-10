@@ -1,0 +1,18 @@
+# Weekly dependency-update PRs. The toolchain is pinned tightly on purpose
+# (ruff exactly, upper bounds on runtime deps), so without this the pins would
+# silently go stale.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      # One PR per week for the dev toolchain instead of four.
+      dev-toolchain:
+        patterns: ["ruff", "mypy", "pytest", "coverage"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
