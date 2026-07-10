@@ -9,3 +9,7 @@ config/user_config.json
 
 # Debug comparison frames written at runtime
 debug/
+
+# Coverage artifacts (CI generates these; never commit them)
+.coverage
+coverage.xml
