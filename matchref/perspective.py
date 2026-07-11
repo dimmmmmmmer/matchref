@@ -124,7 +124,7 @@ def solve_homography(
         float(config.get("ecc_epsilon", 1e-8)),
     )
     try:
-        _, warp = cv2.findTransformECC(  # type: ignore[call-overload]
+        _, warp = cv2.findTransformECC(  # type: ignore[call-overload, unused-ignore]
             off,
             on,
             warp,

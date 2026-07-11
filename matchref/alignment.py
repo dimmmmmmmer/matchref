@@ -125,7 +125,7 @@ def _run_ecc(
         warp,
         motion,
         criteria,
-        mask,  # type: ignore[arg-type]  # cv2 stub omits None, but the runtime accepts it
+        mask,  # type: ignore[arg-type, unused-ignore]  # cv2 stub omits None; runtime accepts it
         gauss,
     )
     return float(score), warp_out
@@ -242,7 +242,7 @@ def _align_features(
     ratio_thresh = float(config.get("feature_match_ratio", 0.75))
     min_inlier_ratio = float(config.get("feature_min_inlier_ratio", 0.15))
 
-    orb = cv2.ORB_create(nfeatures=n_features)  # type: ignore[attr-defined]
+    orb = cv2.ORB_create(nfeatures=n_features)  # type: ignore[attr-defined, unused-ignore]
     kp_off, des_off = orb.detectAndCompute(offline_u8, mask)
     kp_on, des_on = orb.detectAndCompute(online_u8, mask)
     if des_off is None or des_on is None or len(kp_off) < 8 or len(kp_on) < 8:
