@@ -2,6 +2,6 @@
 # can't silently pull a breaking release (4.x and 5.x of OpenCV, numpy 1.x/2.x
 # are what MatchRef is tested against). The opencv floor is 4.8.1.78 — the first
 # wheel with a libwebp patched for CVE-2023-4863 (GHSA-qr4w-53vh-m672).
-numpy>=1.24.0,<3
+numpy>=2.2.6,<3
 opencv-python>=5.0.0.93,<6
 PySide6>=6.11.1,<7
