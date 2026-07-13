@@ -35,15 +35,16 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    from matchref.config import AppConfig
-    from matchref.logging_report import setup_logging
-    from matchref.pipeline import MatchRefPipeline
-
-    config = AppConfig(Path(args.config)) if args.config else AppConfig()
-    logger = setup_logging(str(config.get("log_file", "")))
-    pipeline = MatchRefPipeline(config, logger)
-
     if args.analyze or args.apply:
+        # Heavy imports (OpenCV/numpy via the pipeline) belong to the headless
+        # path only — the GUI defers them so its window paints immediately.
+        from matchref.config import AppConfig
+        from matchref.logging_report import setup_logging
+        from matchref.pipeline import MatchRefPipeline
+
+        config = AppConfig(Path(args.config)) if args.config else AppConfig()
+        setup_logging(str(config.get("log_file", "")))
+        pipeline = MatchRefPipeline(config)
         pipeline.connect()
         if args.apply:
             # An analysis report can't persist across processes (it holds live

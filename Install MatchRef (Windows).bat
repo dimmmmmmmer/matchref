@@ -36,6 +36,15 @@ if errorlevel 1 (
 
 REM --- 2. Virtual environment + dependencies -------------------------------
 echo - Setting up the Python environment ^(this can take a minute^)...
+REM A pre-existing .venv built by an older Python would be reused and shipped
+REM broken - rebuild it when its interpreter is below 3.10.
+if exist ".venv\Scripts\python.exe" (
+  ".venv\Scripts\python.exe" -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>nul
+  if errorlevel 1 (
+    echo - Existing .venv uses an old Python, rebuilding...
+    rmdir /s /q ".venv" || goto :fail
+  )
+)
 if not exist ".venv" (
   python -m venv .venv || goto :fail
 )

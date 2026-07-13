@@ -24,7 +24,9 @@ them by hand.
 > [python.org](https://www.python.org/downloads/) installer** — Homebrew, uv or
 > pyenv builds are invisible to it. If MatchRef doesn't appear in the menu
 > after installing, install Python from python.org and restart Resolve. The
-> installer checks this for you and warns if Resolve can't see Python.
+> installers check this for you: on macOS the installer offers to download and
+> install the right Python automatically; on Windows it prints a warning with
+> the fix.
 
 ## Install
 

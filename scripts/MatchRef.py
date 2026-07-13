@@ -82,18 +82,37 @@ def _find_project_root() -> Path | None:
 
 def _venv_python(project: Path) -> Path | None:
     # POSIX venvs put the interpreter in .venv/bin; Windows venvs use .venv/Scripts
-    # with a .exe suffix. Check both so the Windows installer's venv is actually
-    # used instead of silently falling back to Resolve's bare Python (no cv2/numpy).
+    # with a .exe suffix (pythonw.exe first — it opens no console window). Check
+    # all so the installer's venv is actually used instead of silently falling
+    # back to Resolve's bare Python (no cv2/numpy).
     candidates = (
         project / ".venv" / "bin" / "python",
         project / ".venv" / "bin" / "python3",
+        project / ".venv" / "Scripts" / "pythonw.exe",
         project / ".venv" / "Scripts" / "python.exe",
-        project / ".venv" / "Scripts" / "python3.exe",
     )
     for candidate in candidates:
         if candidate.is_file():
             return candidate
     return None
+
+
+def _branded_python(py: Path) -> Path:
+    # The Dock / task bar names the process after the executable ("python3.12",
+    # generic icon). A same-directory alias named MatchRef fixes the label:
+    # a symlink on POSIX, a copy of the small venv redirector exe on Windows.
+    alias = py.with_name("MatchRef.exe" if py.suffix == ".exe" else "MatchRef")
+    try:
+        if not alias.exists():
+            if py.suffix == ".exe":
+                import shutil
+
+                shutil.copy2(py, alias)
+            else:
+                alias.symlink_to(py.name)
+        return alias
+    except OSError:
+        return py
 
 
 def _show_error(title: str, message: str) -> None:
@@ -135,7 +154,7 @@ def _launch_via_venv(project: Path) -> bool:
     # is diagnosable instead of vanishing into DEVNULL. The child keeps its
     # inherited descriptor after our handle closes.
     log_path = project / "launcher.log"
-    cmd = [os.fspath(py), os.fspath(main_py)]
+    cmd = [os.fspath(_branded_python(py)), os.fspath(main_py)]
     with open(log_path, "wb") as log:
         # pylint: disable=consider-using-with — detached child, must not be waited on
         proc = subprocess.Popen(
@@ -145,7 +164,9 @@ def _launch_via_venv(project: Path) -> bool:
             stderr=log,
             start_new_session=True,
         )
-    time.sleep(1.5)
+    # This host call blocks Resolve's UI, so keep the instant-crash check short;
+    # later failures still land in launcher.log.
+    time.sleep(0.4)
     if proc.poll() is not None:
         _show_error(
             "MatchRef — ошибка запуска",

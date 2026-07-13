@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 import traceback
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from matchref.config import USER_CONFIG_PATH, AppConfig
 from matchref.conform_paths import assign_conform_path, conform_path_from_config
-from matchref.debug_frames import resolve_debug_dir
 from matchref.logging_report import setup_logging
-from matchref.pipeline import MatchRefPipeline
 from matchref.selection_ui import (
     SELECTION_MODES,
     apply_selection_to_config,
@@ -20,8 +20,12 @@ from matchref.selection_ui import (
     selection_from_config,
 )
 
+if TYPE_CHECKING:
+    from matchref.pipeline import MatchRefPipeline
+
 try:
-    from PySide6.QtCore import QObject, QThread, Signal
+    from PySide6.QtCore import QObject, Qt, QThread, Signal
+    from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
     from PySide6.QtWidgets import (
         QApplication,
         QCheckBox,
@@ -68,10 +72,18 @@ class PipelineWorker(QObject):
     log_line = Signal(str)
     finished_ok = Signal()
     failed = Signal(str)
+    pipeline_created = Signal(object)
 
-    def __init__(self, pipeline: MatchRefPipeline) -> None:
+    def __init__(
+        self,
+        pipeline: MatchRefPipeline | None,
+        config: AppConfig,
+        logger: logging.Logger,
+    ) -> None:
         super().__init__()
         self.pipeline = pipeline
+        self.config = config
+        self.logger = logger
         self._cancelled = False
 
     def cancel(self) -> None:
@@ -79,6 +91,14 @@ class PipelineWorker(QObject):
 
     def run(self) -> None:
         try:
+            # First run: import and build the engine HERE, in the worker thread.
+            # The pipeline import pulls OpenCV/numpy — done at window start it
+            # delays the first paint by seconds on a cold start.
+            if self.pipeline is None:
+                from matchref.pipeline import MatchRefPipeline
+
+                self.pipeline = MatchRefPipeline(self.config, self.logger)
+                self.pipeline_created.emit(self.pipeline)
             # Reconnect on every run so the current Resolve timeline is re-read.
             # Reusing a cached connection would keep processing the timeline that
             # was open at first launch even after the user switched timelines
@@ -99,7 +119,8 @@ class MatchRefWindow(QMainWindow):
         super().__init__()
         self.config = config or AppConfig()
         self.logger = setup_logging(str(self.config.get("log_file", "")))
-        self.pipeline = MatchRefPipeline(self.config, self.logger)
+        # Created lazily by the first PipelineWorker run (heavy imports).
+        self.pipeline: MatchRefPipeline | None = None
         self._worker_thread: QThread | None = None
         self._worker: PipelineWorker | None = None
         self.setWindowTitle("MatchRef — Offline Transform Match")
@@ -172,14 +193,8 @@ class MatchRefWindow(QMainWindow):
         self.use_mid_cb = QCheckBox("Use Midpoint Keyframe")
         self.dry_run_cb = QCheckBox("Dry Run (analyze only, no transforms)")
         self.debug_cb = QCheckBox("Debug: save comparison frames")
-        for cb in (
-            self.match_scale_cb,
-            self.match_position_cb,
-            self.match_rotation_cb,
-            self.use_mid_cb,
-        ):
-            cb.setChecked(True)
-        self.dry_run_cb.setChecked(False)
+        # No pre-checking here: _load_config_to_ui is the single source of the
+        # initial state, so the UI always reflects the shipped/saved config.
         self.dry_run_cb.toggled.connect(self._update_run_button_label)
         toggle_layout.addWidget(self.match_scale_cb, 0, 0)
         toggle_layout.addWidget(self.match_position_cb, 0, 1)
@@ -396,13 +411,17 @@ class MatchRefWindow(QMainWindow):
         self.status_label.setText("Running…")
 
         self._worker_thread = QThread()
-        self._worker = PipelineWorker(self.pipeline)
+        self._worker = PipelineWorker(self.pipeline, self.config, self.logger)
         self._worker.moveToThread(self._worker_thread)
         self._worker_thread.started.connect(self._worker.run)
         self._worker.log_line.connect(self._on_worker_log)
         self._worker.finished_ok.connect(self._on_worker_finished)
         self._worker.failed.connect(self._on_worker_failed)
+        self._worker.pipeline_created.connect(self._on_pipeline_created)
         self._worker_thread.start()
+
+    def _on_pipeline_created(self, pipeline: object) -> None:
+        self.pipeline = pipeline  # type: ignore[assignment]  # Signal(object) erases the type
 
     def _on_cancel(self) -> None:
         if self._worker:
@@ -416,6 +435,8 @@ class MatchRefWindow(QMainWindow):
             self.status_label.setText(text[:80])
 
     def _on_worker_finished(self) -> None:
+        from matchref.debug_frames import resolve_debug_dir
+
         self._teardown_worker()
         self._set_busy(False)
         self.status_label.setText("Done")
@@ -438,6 +459,8 @@ class MatchRefWindow(QMainWindow):
         self._worker = None
 
     def _open_debug_folder(self) -> None:
+        from matchref.debug_frames import resolve_debug_dir
+
         self._sync_ui_to_config()
         path = resolve_debug_dir(self.config) if self.debug_cb.isChecked() else None
         if path is None:
@@ -456,8 +479,32 @@ class MatchRefWindow(QMainWindow):
         super().closeEvent(event)
 
 
+def _app_icon() -> QIcon:
+    # Drawn at runtime so no binary asset lives in the repo. On macOS the
+    # application window icon is also what the Dock shows for the process.
+    pixmap = QPixmap(256, 256)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor("#5A4FCF"))
+    painter.drawRoundedRect(16, 16, 224, 224, 52, 52)
+    font = QFont()
+    font.setBold(True)
+    font.setPixelSize(104)
+    painter.setFont(font)
+    painter.setPen(QColor("white"))
+    painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "MR")
+    painter.end()
+    return QIcon(pixmap)
+
+
 def run_gui(config_path: str | None = None) -> int:
-    app = QApplication.instance() or QApplication(sys.argv)
+    existing = QApplication.instance()
+    app = existing if isinstance(existing, QApplication) else QApplication(sys.argv)
+    app.setApplicationName("MatchRef")
+    app.setApplicationDisplayName("MatchRef")
+    app.setWindowIcon(_app_icon())
     cfg = AppConfig(Path(config_path)) if config_path else AppConfig()
     window = MatchRefWindow(cfg)
     window.show()
