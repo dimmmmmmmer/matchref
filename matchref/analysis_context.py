@@ -60,6 +60,10 @@ class _SampleFrames:
     # is aligned; carried here so the reject/debug helpers don't re-derive them.
     admit: float = 0.0
     apply_floor: float = 0.0
+    # The rejected first refine attempt (outcome + reasons), kept so the
+    # escalation retry can decide whether widened limits could rescue it.
+    first_refine: Any = None
+    first_reasons: list[str] = field(default_factory=list)
 
 
 class AnalyzerCore:

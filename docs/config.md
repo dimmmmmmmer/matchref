@@ -127,10 +127,13 @@
 | `refine_position_min_gain` | `0.12` | Минимальный выигрыш NCC, чтобы оставить Pan/Tilt (парсимония). |
 | `refine_rotation_after_zoom` | `false` | Искать поворот после зума. |
 | `auto_reframe_ncc_threshold` | `0.9` | NCC ниже → подозрение на реврейм, искать позицию. |
-| `auto_reframe_translation_pixels` | `12.0` | Порог трансляции по оси для авто-реврейма. |
-| `auto_reframe_translation_total_pixels` | `18.0` | Порог суммарной трансляции. |
+| `auto_reframe_translation_pixels` | `12.0` | Порог трансляции по оси для авто-реврейма (при `match_position=true` делится на 3). |
+| `auto_reframe_translation_total_pixels` | `18.0` | Порог суммарной трансляции (при `match_position=true` делится на 3). |
 | `snap_pan_tilt_below_pixels` | `2.0` | Pan/Tilt меньше этого → 0 (снап к центру). |
 | `max_refine_pan_tilt_fraction` | `0.15` | Лимит Pan/Tilt как доля канваса. |
+| `refine_escalation_enabled` | `true` | Повторный refine отбракованного сэмпла: позиция принудительно, лимиты шире. |
+| `escalated_max_refine_pan_tilt_fraction` | `0.30` | Лимит Pan/Tilt для эскалационного прохода. |
+| `escalation_min_first_ncc` | `0.5` | Ниже этого NCC первой попытки эскалация не запускается (безнадёжный матч). |
 
 ## Приёмка и контроль качества
 
