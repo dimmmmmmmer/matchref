@@ -39,6 +39,11 @@ def translation_pixels_from_warp(
     return float(pan), float(tilt)
 
 
+def _position_requested(config: AppConfig) -> bool:
+    """Whether the user explicitly asked for position matching (GUI checkbox)."""
+    return bool(config.get("match_position", True))
+
+
 def ecc_suggests_reframe(
     warp: np.ndarray | None,
     timeline_size: tuple[int, int],
@@ -47,6 +52,12 @@ def ecc_suggests_reframe(
     pan, tilt = translation_pixels_from_warp(warp, timeline_size, config)
     per_axis = float(config.get("auto_reframe_translation_pixels", 12.0))
     total = float(config.get("auto_reframe_translation_total_pixels", 18.0))
+    if _position_requested(config):
+        # An explicit Match Position request lowers the detection bar 3x —
+        # otherwise real 5–10px reframes sit below the default 12px trigger
+        # and the position stage never even runs.
+        per_axis /= 3.0
+        total /= 3.0
     return abs(pan) >= per_axis or abs(tilt) >= per_axis or math.hypot(pan, tilt) >= total
 
 
@@ -65,6 +76,10 @@ def should_refine_position(
         return True
 
     ncc_floor = float(config.get("auto_reframe_ncc_threshold", 0.95))
+    if _position_requested(config):
+        # With Match Position on, a zoom-only match must be near-perfect before
+        # the position search is skipped.
+        ncc_floor = max(ncc_floor, 0.97)
     if ncc_after_zoom < ncc_floor:
         return True
 

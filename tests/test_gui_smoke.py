@@ -43,6 +43,9 @@ def test_main_window_builds_offscreen(qt_app: QApplication) -> None:
         # The checkboxes must mirror config, not a hardcoded pre-check.
         assert not window.match_position_cb.isChecked()
         assert not window.match_rotation_cb.isChecked()
+        # Position search combo mirrors refine_position_mode (default: auto).
+        assert window.position_mode_combo.count() == 3
+        assert window.position_mode_combo.currentData() == "auto"
         assert not window.progress_bar.isVisible()
         # The engine (OpenCV etc.) is built lazily by the first run.
         assert window.pipeline is None

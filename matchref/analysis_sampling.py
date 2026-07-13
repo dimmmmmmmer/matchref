@@ -396,10 +396,83 @@ class _SamplingMixin(_SampleDebugMixin):
         if refine_ok:
             loaded.sample.accept_via = accept_via
             return None
+        loaded.first_refine = refine_outcome
+        loaded.first_reasons = reasons
+        if self._escalated_refine(ctx, point, loaded, alignment, warp, should_cancel):
+            return None
         self._stash_ecc_candidate(ctx, loaded.sample, alignment)
         message = "refine rejected: " + "; ".join(reasons)
         return self._record_sample_reject(
             ctx, point, loaded, alignment, message=message, warning=message
+        )
+
+    def _escalated_refine(
+        self,
+        ctx: _ClipContext,
+        point: Any,
+        loaded: _SampleFrames,
+        alignment: Any,
+        warp: Any,
+        should_cancel: Callable[[], bool] | None,
+    ) -> bool:
+        """Second-chance refine with forced position + widened limits; True when accepted."""
+        from matchref.escalation import escalated_config, should_escalate
+
+        first = loaded.first_refine
+        if first is None or not should_escalate(
+            loaded.first_reasons, first.used_position, first.ncc, self.config
+        ):
+            return False
+        esc = escalated_config(self.config)
+        canvas = self._timeline_canvas_size()
+        baseline = None if loaded.absolute else ctx.baseline
+        guess = initial_edit_from_warp(warp, canvas, esc, baseline)
+        outcome = refine_resolve_edit(
+            loaded.online_raw,
+            loaded.offline,
+            canvas_size=canvas,
+            config=esc,
+            initial=guess,
+            warp=warp,
+            should_cancel=should_cancel,
+        )
+        ok, esc_reasons, _via = sample_refine_accepted(
+            ncc=outcome.ncc,
+            gradient_ncc=outcome.gradient_ncc,
+            edit=outcome.edit,
+            ecc_scale=alignment.scale,
+            timeline_size=canvas,
+            config=esc,
+        )
+        if not ok:
+            self.logger.info(
+                "[%s %s] escalated refine also rejected: %s",
+                ctx.result.clip_name,
+                point.value,
+                "; ".join(esc_reasons),
+            )
+            return False
+        self._accept_escalated(ctx, point, loaded, outcome)
+        return True
+
+    def _accept_escalated(
+        self, ctx: _ClipContext, point: Any, loaded: _SampleFrames, outcome: Any
+    ) -> None:
+        """Record an escalated-refine acceptance on the sample."""
+        sample = loaded.sample
+        sample.refined_edit = outcome.edit
+        sample.ecc_score = score_from_refine_ncc(outcome.ncc)
+        sample.accept_via = "escalated"
+        self.logger.info(
+            "[%s %s] escalated refine accepted: zoom=%.4f pan=%.1f tilt=%.1f ncc=%.4f "
+            "(first attempt: %s)",
+            ctx.result.clip_name,
+            point.value,
+            outcome.edit.zoom_x,
+            outcome.edit.pan,
+            outcome.edit.tilt,
+            outcome.ncc,
+            "; ".join(loaded.first_reasons),
         )
 
     def _accept_sample(

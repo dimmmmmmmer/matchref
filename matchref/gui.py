@@ -196,12 +196,18 @@ class MatchRefWindow(QMainWindow):
         # No pre-checking here: _load_config_to_ui is the single source of the
         # initial state, so the UI always reflects the shipped/saved config.
         self.dry_run_cb.toggled.connect(self._update_run_button_label)
+        self.position_mode_combo = QComboBox()
+        self.position_mode_combo.addItem("Auto (detect reframe)", "auto")
+        self.position_mode_combo.addItem("Always", "always")
+        self.position_mode_combo.addItem("Off", "off")
         toggle_layout.addWidget(self.match_scale_cb, 0, 0)
         toggle_layout.addWidget(self.match_position_cb, 0, 1)
         toggle_layout.addWidget(self.match_rotation_cb, 1, 0)
         toggle_layout.addWidget(self.use_mid_cb, 1, 1)
-        toggle_layout.addWidget(self.dry_run_cb, 2, 0, 1, 2)
-        toggle_layout.addWidget(self.debug_cb, 3, 0, 1, 2)
+        toggle_layout.addWidget(QLabel("Position search"), 2, 0)
+        toggle_layout.addWidget(self.position_mode_combo, 2, 1)
+        toggle_layout.addWidget(self.dry_run_cb, 3, 0, 1, 2)
+        toggle_layout.addWidget(self.debug_cb, 4, 0, 1, 2)
         return toggles
 
     def _build_debug_row(self) -> QHBoxLayout:
@@ -291,6 +297,11 @@ class MatchRefWindow(QMainWindow):
         self.match_scale_cb.setChecked(bool(self.config.get("match_scale", True)))
         self.match_position_cb.setChecked(bool(self.config.get("match_position", True)))
         self.match_rotation_cb.setChecked(bool(self.config.get("match_rotation", True)))
+        position_mode = str(self.config.get("refine_position_mode", "auto")).lower()
+        if bool(self.config.get("refine_position_after_zoom", False)):
+            position_mode = "always"  # legacy override flag maps to Always
+        mode_idx = self.position_mode_combo.findData(position_mode)
+        self.position_mode_combo.setCurrentIndex(max(0, mode_idx))
         self.use_mid_cb.setChecked(bool(self.config.get("use_midpoint_keyframe", True)))
         self.dry_run_cb.setChecked(bool(self.config.get("dry_run", False)))
         self.debug_cb.setChecked(bool(self.config.get("debug_save_frames", False)))
@@ -341,6 +352,12 @@ class MatchRefWindow(QMainWindow):
         self.config.set("match_scale", self.match_scale_cb.isChecked())
         self.config.set("match_position", self.match_position_cb.isChecked())
         self.config.set("match_rotation", self.match_rotation_cb.isChecked())
+        self.config.set(
+            "refine_position_mode", str(self.position_mode_combo.currentData() or "auto")
+        )
+        # The combo is the single source now; the legacy always-flag must not
+        # silently override an explicit Auto/Off choice.
+        self.config.set("refine_position_after_zoom", False)
         self.config.set("use_midpoint_keyframe", self.use_mid_cb.isChecked())
         self.config.set("dry_run", self.dry_run_cb.isChecked())
         self.config.set("debug_save_frames", self.debug_cb.isChecked())
