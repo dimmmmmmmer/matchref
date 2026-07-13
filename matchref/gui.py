@@ -12,9 +12,9 @@ from matchref.debug_frames import resolve_debug_dir
 from matchref.logging_report import setup_logging
 from matchref.pipeline import MatchRefPipeline
 from matchref.selection_ui import (
-    RESOLVE_COLORS,
     SELECTION_MODES,
     apply_selection_to_config,
+    colors_for_mode,
     mode_uses_color,
     mode_uses_track,
     selection_from_config,
@@ -150,10 +150,11 @@ class MatchRefWindow(QMainWindow):
             self.selection_mode_combo.addItem(label, value)
         self.selection_mode_combo.currentIndexChanged.connect(self._on_selection_mode_changed)
         select_layout.addWidget(self.selection_mode_combo, 0, 1)
-        self.selection_color_label = QLabel("Color")
+        self.selection_color_label = QLabel("Clip color")
         select_layout.addWidget(self.selection_color_label, 1, 0)
+        # Populated per selection mode (clip colors vs flag colors differ in
+        # Resolve) — see _set_color_options.
         self.selection_color_combo = QComboBox()
-        self.selection_color_combo.addItems(RESOLVE_COLORS)
         select_layout.addWidget(self.selection_color_combo, 1, 1)
         self.selection_track_label = QLabel("Video track")
         select_layout.addWidget(self.selection_track_label, 2, 0)
@@ -284,10 +285,9 @@ class MatchRefWindow(QMainWindow):
         mode, color, track = selection_from_config(self.config)
         mode_idx = self.selection_mode_combo.findData(mode)
         self.selection_mode_combo.setCurrentIndex(mode_idx if mode_idx >= 0 else 0)
-        color_idx = self.selection_color_combo.findText(color)
-        self.selection_color_combo.setCurrentIndex(max(0, color_idx))
         self.selection_track_spin.setValue(track)
         self._on_selection_mode_changed()
+        self._set_color_options(mode, color)
 
         self.fusion_cb.setChecked(bool(self.config.get("apply_via_fusion", False)))
         self.perspective_cb.setChecked(bool(self.config.get("perspective_match_enabled", False)))
@@ -296,11 +296,25 @@ class MatchRefWindow(QMainWindow):
 
         self._update_run_button_label()
 
+    def _set_color_options(self, mode: str, preferred: str) -> None:
+        """Offer the palette for `mode` in the dropdown, keeping `preferred` when it fits."""
+        self.selection_color_combo.blockSignals(True)
+        self.selection_color_combo.clear()
+        self.selection_color_combo.addItems(colors_for_mode(mode))
+        idx = self.selection_color_combo.findText(preferred)
+        if idx < 0:
+            # Purple exists in both Resolve palettes — the project default.
+            idx = self.selection_color_combo.findText("Purple")
+        self.selection_color_combo.setCurrentIndex(max(0, idx))
+        self.selection_color_combo.blockSignals(False)
+
     def _on_selection_mode_changed(self) -> None:
-        """Show the color picker / track spinner only when the mode needs them."""
+        """Swap the color palette and show only the widgets the mode needs."""
         mode = str(self.selection_mode_combo.currentData() or "auto")
         uses_color = mode_uses_color(mode)
         uses_track = mode_uses_track(mode)
+        self.selection_color_label.setText("Flag color" if mode == "flagged" else "Clip color")
+        self._set_color_options(mode, self.selection_color_combo.currentText())
         self.selection_color_label.setVisible(uses_color)
         self.selection_color_combo.setVisible(uses_color)
         self.selection_track_label.setVisible(uses_track)
