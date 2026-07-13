@@ -60,6 +60,22 @@ if errorlevel 8 goto :fail
 
 copy /Y "%~dp0scripts\MatchRef.py" "%DEST%\MatchRef.py" >nul || goto :fail
 
+REM --- 4. Verify Resolve can load Python -----------------------------------
+REM Resolve hides .py entries from Workspace > Scripts when its scripting host
+REM cannot load Python. Ask Resolve's bundled interpreter directly so the user
+REM learns this now, not after hunting for a missing menu item.
+set "FUSCRIPT=%PROGRAMFILES%\Blackmagic Design\DaVinci Resolve\fuscript.exe"
+if exist "%FUSCRIPT%" (
+  "%FUSCRIPT%" -l py3 -x "print('ok')" >nul 2>nul
+  if errorlevel 1 (
+    echo.
+    echo [WARNING] DaVinci Resolve cannot load Python 3, so MatchRef will NOT
+    echo appear in the Workspace ^> Scripts menu.
+    echo Install Python from https://www.python.org/downloads/ ^(the official
+    echo installer^), then restart Resolve.
+  )
+)
+
 echo.
 echo [OK] MatchRef is installed.
 echo.

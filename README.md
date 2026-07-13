@@ -18,6 +18,14 @@ them by hand.
 - DaVinci Resolve **Studio** 20 or newer (Scripting API)
 - Python 3 (the installer creates an isolated environment for you)
 
+> **Important (macOS / Windows):** Resolve itself must also be able to load
+> Python, or it silently hides every `.py` entry from the *Workspace → Scripts*
+> menu. Resolve only detects Python from the **official
+> [python.org](https://www.python.org/downloads/) installer** — Homebrew, uv or
+> pyenv builds are invisible to it. If MatchRef doesn't appear in the menu
+> after installing, install Python from python.org and restart Resolve. The
+> installer checks this for you and warns if Resolve can't see Python.
+
 ## Install
 
 1. Download the **[latest release](https://github.com/dimmmmmmmer/matchref/releases/latest)**
