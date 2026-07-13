@@ -452,6 +452,13 @@ class _SamplingMixin(_SampleDebugMixin):
                 "; ".join(esc_reasons),
             )
             return False
+        self._accept_escalated(ctx, point, loaded, outcome)
+        return True
+
+    def _accept_escalated(
+        self, ctx: _ClipContext, point: Any, loaded: _SampleFrames, outcome: Any
+    ) -> None:
+        """Record an escalated-refine acceptance on the sample."""
         sample = loaded.sample
         sample.refined_edit = outcome.edit
         sample.ecc_score = score_from_refine_ncc(outcome.ncc)
@@ -467,7 +474,6 @@ class _SamplingMixin(_SampleDebugMixin):
             outcome.ncc,
             "; ".join(loaded.first_reasons),
         )
-        return True
 
     def _accept_sample(
         self, ctx: _ClipContext, point: Any, loaded: _SampleFrames, alignment: Any
