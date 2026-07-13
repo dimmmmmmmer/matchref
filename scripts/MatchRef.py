@@ -14,25 +14,65 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 import traceback
 from pathlib import Path
 
 
-def _utility_dir() -> Path:
-    return Path(__file__).resolve().parent
+def _utility_dir() -> Path | None:
+    # Resolve's menu host exec()s the script TEXT, so __file__ is undefined
+    # there — touching it raises NameError and the click silently does nothing.
+    # Fall back to argv[0], then to the standard per-OS Utility folders.
+    try:
+        return Path(__file__).resolve().parent
+    except NameError:
+        pass
+    argv0 = sys.argv[0] if sys.argv else ""
+    if argv0.lower().endswith("matchref.py"):
+        path = Path(argv0).expanduser()
+        if path.is_file():
+            return path.resolve().parent
+    home = Path.home()
+    candidates = [
+        home
+        / "Library"
+        / "Application Support"
+        / "Blackmagic Design"
+        / "DaVinci Resolve"
+        / "Fusion"
+        / "Scripts"
+        / "Utility",
+        home / ".local" / "share" / "DaVinciResolve" / "Fusion" / "Scripts" / "Utility",
+    ]
+    appdata = os.environ.get("APPDATA", "").strip()
+    if appdata:
+        candidates.insert(
+            0,
+            Path(appdata)
+            / "Blackmagic Design"
+            / "DaVinci Resolve"
+            / "Support"
+            / "Fusion"
+            / "Scripts"
+            / "Utility",
+        )
+    for base in candidates:
+        if (base / "matchref" / "main.py").is_file():
+            return base
+    return None
 
 
 def _find_project_root() -> Path | None:
     """Ищем корень проекта (main.py + пакет matchref)."""
-    utility = _utility_dir()
-    candidates = [
-        utility / "matchref",  # Utility/matchref/ — типичная копия репозитория
-        utility.parent / "matchref",
-        Path.home() / "Documents" / "matchref",
-    ]
+    candidates = []
     env_root = os.environ.get("MATCHREF_ROOT", "").strip()
     if env_root:
-        candidates.insert(0, Path(env_root))
+        candidates.append(Path(env_root))
+    utility = _utility_dir()
+    if utility is not None:
+        candidates.append(utility / "matchref")  # Utility/matchref/ — копия репозитория
+        candidates.append(utility.parent / "matchref")
+    candidates.append(Path.home() / "Documents" / "matchref")
 
     for root in candidates:
         if (root / "main.py").is_file() and (root / "matchref" / "__init__.py").is_file():
@@ -78,24 +118,42 @@ def _show_error(title: str, message: str) -> None:
             pass
 
 
+def _crash_log_tail(log_path: Path) -> str:
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    return "\n".join(lines[-15:])
+
+
 def _launch_via_venv(project: Path) -> bool:
     py = _venv_python(project)
     main_py = project / "main.py"
     if py is None or not main_py.is_file():
         return False
-    # Fixed argv: the bundled venv python + this project's main.py. The GUI is
-    # launched detached (start_new_session) and must not be waited on, so a
-    # `with` block is wrong here.
-    # pylint: disable=consider-using-with
+    # The GUI runs detached; its output goes to launcher.log so a startup crash
+    # is diagnosable instead of vanishing into DEVNULL. The child keeps its
+    # inherited descriptor after our handle closes.
+    log_path = project / "launcher.log"
     cmd = [os.fspath(py), os.fspath(main_py)]
-    subprocess.Popen(
-        cmd,
-        cwd=str(project),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
-    print(f"MatchRef: started with {py}")
+    with open(log_path, "wb") as log:
+        # pylint: disable=consider-using-with — detached child, must not be waited on
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(project),
+            stdout=log,
+            stderr=log,
+            start_new_session=True,
+        )
+    time.sleep(1.5)
+    if proc.poll() is not None:
+        _show_error(
+            "MatchRef — ошибка запуска",
+            f"GUI завершился сразу после запуска (код {proc.returncode}).\n\n"
+            f"Последние строки лога ({log_path}):\n{_crash_log_tail(log_path)}",
+        )
+        return True  # handled — do not fall back to Resolve's bare Python
+    print(f"MatchRef: started with {py} (log: {log_path})")
     return True
 
 
@@ -140,4 +198,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:  # noqa: BLE001 — the host console is hidden; surface everything
+        _show_error("MatchRef — ошибка лаунчера", f"{exc}\n\n{traceback.format_exc()}")
