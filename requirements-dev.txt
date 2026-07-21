@@ -3,5 +3,5 @@ pytest>=9.1.1
 # Ruff is pinned exactly and must match the rev in .pre-commit-config.yaml:
 # formatter output differs between versions, so a skew reintroduces format
 # drift between local runs, pre-commit, and CI's `ruff format --check`.
-ruff==0.15.21
-mypy>=2.2.0,<3
+ruff==0.15.22
+mypy>=2.3.0,<3
