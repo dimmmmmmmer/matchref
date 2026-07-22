@@ -2,7 +2,7 @@ repos:
   # Keep this rev in lockstep with the exact ruff pin in requirements-dev.txt —
   # formatter output differs between versions.
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.21
+    rev: v0.15.22
     hooks:
       - id: ruff-check
         args: [--fix]
@@ -20,7 +20,7 @@ repos:
         args: [--maxkb=1024]
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v2.2.0
+    rev: v2.3.0
     hooks:
       - id: mypy
         files: ^matchref/
