@@ -314,6 +314,24 @@ def _agreement_verdict(
     return True, [], via
 
 
+def alignment_scale_bounds(score: float, config: AppConfig) -> tuple[float, float]:
+    """Applicable [min, max] zoom for a sample; widened for high-confidence matches."""
+    # The strict 0.4–2.5 window rejects legitimate big blow-ups (a 3–4x punch-in
+    # from the offline edit). A wrong zoom rarely matches this well, so a sample
+    # whose score clears the escalation floor may use the refine search's own
+    # wider window instead of being discarded at finalize.
+    lo = float(config.get("min_alignment_scale", 0.4))
+    hi = float(config.get("max_alignment_scale", 2.5))
+    if not bool(config.get("alignment_scale_escalation", True)):
+        return lo, hi
+    if float(score) < float(config.get("scale_escalation_min_score", 0.96)):
+        return lo, hi
+    return (
+        float(config.get("escalated_min_alignment_scale", 0.25)),
+        float(config.get("escalated_max_alignment_scale", 4.0)),
+    )
+
+
 def assess_clip_match_quality(
     ok_samples: list[TransformSample],
     config: AppConfig,
@@ -329,13 +347,11 @@ def assess_clip_match_quality(
         reasons.append(f"min match score {min(scores):.4f} < {min_score:.2f}")
 
     scales = [float(s.scale) for s in ok_samples]
-    min_scale = float(config.get("min_alignment_scale", 0.4))
-    max_scale = float(config.get("max_alignment_scale", 2.5))
     for sample in ok_samples:
-        if sample.scale < min_scale or sample.scale > max_scale:
+        lo, hi = alignment_scale_bounds(float(sample.ecc_score), config)
+        if sample.scale < lo or sample.scale > hi:
             reasons.append(
-                f"{sample.sample_point.value}: scale {sample.scale:.3f} outside "
-                f"[{min_scale}, {max_scale}]"
+                f"{sample.sample_point.value}: scale {sample.scale:.3f} outside [{lo}, {hi}]"
             )
             break
 

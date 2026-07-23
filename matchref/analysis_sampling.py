@@ -420,7 +420,11 @@ class _SamplingMixin(_SampleDebugMixin):
 
         first = loaded.first_refine
         if first is None or not should_escalate(
-            loaded.first_reasons, first.used_position, first.ncc, self.config
+            loaded.first_reasons,
+            first.used_position,
+            first.ncc,
+            self.config,
+            rotation_deg=float(first.edit.rotation_deg),
         ):
             return False
         esc = escalated_config(self.config)

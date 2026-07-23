@@ -29,14 +29,17 @@ def should_escalate(
     used_position: bool,
     first_ncc: float,
     config: AppConfig,
+    *,
+    rotation_deg: float = 0.0,
 ) -> bool:
     """Retry only when limits (not match quality) rejected the sample, or position never ran.
 
     A hopeless first match (very low NCC) is excluded: a wider search there would
-    only fit noise. The two escalation triggers are (a) the pan/tilt plausibility
+    only fit noise. The escalation triggers are (a) the pan/tilt plausibility
     limit fired — the reframe may simply be bigger than the default 15% ceiling —
-    and (b) the zoom-first descent never searched position, so a real reframe was
-    never even attempted.
+    (b) the first refine's rotation is pinned at the rotation cap, so the real
+    rotation may be larger, and (c) the zoom-first descent never searched
+    position, so a real reframe was never even attempted.
     """
     if not escalation_enabled(config):
         return False
@@ -44,15 +47,28 @@ def should_escalate(
         return False
     if any("pan/tilt" in reason for reason in reasons):
         return True
+    if _rotation_pinned_at_cap(rotation_deg, config):
+        return True
     return not used_position
 
 
+def _rotation_pinned_at_cap(rotation_deg: float, config: AppConfig) -> bool:
+    """A result sitting on the rotation clamp means the descent hit the wall."""
+    if bool(config.get("lock_alignment_rotation", False)):
+        return False
+    max_rot = float(config.get("max_alignment_rotation_deg", 3.0))
+    return max_rot > 0 and abs(float(rotation_deg)) >= max_rot - 0.05
+
+
 def escalated_config(config: AppConfig) -> AppConfig:
-    """A config view with position forced on and the pan/tilt ceiling widened."""
+    """A config view with position forced on and the pan/tilt + rotation caps widened."""
     overrides: dict[str, Any] = {
         "refine_position_mode": "always",
         "max_refine_pan_tilt_fraction": float(
             config.get("escalated_max_refine_pan_tilt_fraction", 0.30)
+        ),
+        "max_alignment_rotation_deg": float(
+            config.get("escalated_max_alignment_rotation_deg", 10.0)
         ),
     }
     explicit = float(config.get("max_refine_pan_tilt_pixels", 0.0))
