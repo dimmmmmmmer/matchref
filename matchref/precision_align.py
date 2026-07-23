@@ -310,7 +310,7 @@ def _drop_unjustified_position(
     config: AppConfig,
     use_rot: bool,
 ) -> None:
-    """Position parsimony: zero Pan/Tilt unless it earns a real gradient-match gain."""
+    """Position parsimony: zero Pan/Tilt unless it earns a real match gain."""
     # On low-structure clips (smoke/fire/graded) the position drifts chasing noise
     # while zoom stays right — a genuine reframe lifts the (grade-invariant) gradient
     # match a lot, a spurious one barely moves it (or makes it worse). Verified
@@ -319,11 +319,41 @@ def _drop_unjustified_position(
     if not (abs(state[1]) >= snap or abs(state[2]) >= snap):
         return
     min_gain = float(config.get("refine_position_min_gain", 0.12))
-    g_with = ref.gradient_ncc(_render_state(state, online_raw, canvas_size, config, use_rot))
+    with_render = _render_state(state, online_raw, canvas_size, config, use_rot)
     zero_state = [state[0], 0.0, 0.0, state[3]]
-    g_zero = ref.gradient_ncc(_render_state(zero_state, online_raw, canvas_size, config, use_rot))
-    if g_with - g_zero < min_gain:
-        state[1] = state[2] = 0.0
+    zero_render = _render_state(zero_state, online_raw, canvas_size, config, use_rot)
+    g_with = ref.gradient_ncc(with_render)
+    g_zero = ref.gradient_ncc(zero_render)
+    if g_with - g_zero >= min_gain:
+        return
+    if _position_kept_by_low_structure_fallback(
+        ref, with_render, zero_render, g_with, g_zero, config
+    ):
+        return
+    state[1] = state[2] = 0.0
+
+
+def _position_kept_by_low_structure_fallback(
+    ref: _Reference,
+    with_render: np.ndarray,
+    zero_render: np.ndarray,
+    g_with: float,
+    g_zero: float,
+    config: AppConfig,
+) -> bool:
+    """Second parsimony tier: trust the intensity NCC when gradients carry no signal."""
+    # When the content has almost no gradient structure anywhere, a real reframe
+    # cannot clear the absolute min_gain bar — the gradient scale itself is tiny —
+    # and the gate above would zero a genuine Pan/Tilt. In that regime (weak overall
+    # gradient match, but position still helping, not hurting) fall back to the
+    # plain intensity NCC: keep the position when it beats the zeroed render by a
+    # margin. Noise-chasing drifts don't survive this either — they move the NCC
+    # by ~0 or negative.
+    low_floor = float(config.get("refine_position_low_structure_floor", 0.35))
+    if g_with >= low_floor or g_with - g_zero <= 0.0:
+        return False
+    min_ncc_gain = float(config.get("refine_position_min_ncc_gain", 0.02))
+    return ref.score(with_render) - ref.score(zero_render) >= min_ncc_gain
 
 
 def _refine_at_canvas(

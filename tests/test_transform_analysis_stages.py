@@ -256,7 +256,8 @@ def test_consensus_rescue_rejected_by_gate(monkeypatch) -> None:
 
 def test_best_select_problems_scale_out_of_range() -> None:
     analyzer = _analyzer()
-    best = _sample(ok=True, scale=3.0, ecc_score=0.97)
+    # 5.0 exceeds even the escalated high-confidence window (0.25–4.0).
+    best = _sample(ok=True, scale=5.0, ecc_score=0.97)
     reasons, animated = analyzer._best_select_problems(_ctx(_result()), [best], best)
     assert reasons and "outside" in reasons[0]
     assert not animated

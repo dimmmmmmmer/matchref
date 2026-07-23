@@ -31,6 +31,7 @@ from matchref.lock_cut_align import (
     timeline_end_frame,
 )
 from matchref.match_quality import (
+    alignment_scale_bounds,
     assess_clip_match_quality,
     clip_motion_profile,
     ecc_consensus_passes,
@@ -408,8 +409,7 @@ class TransformAnalyzer(_SamplingMixin):
         self, ctx: _ClipContext, ok_samples: list[TransformSample], best: TransformSample
     ) -> tuple[list[str], bool]:
         """Validate the best sample's scale and classify motion; returns (reasons, animated)."""
-        min_scale = float(self.config.get("min_alignment_scale", 0.4))
-        max_scale = float(self.config.get("max_alignment_scale", 2.5))
+        min_scale, max_scale = alignment_scale_bounds(float(best.ecc_score), self.config)
         reasons: list[str] = []
         if not (min_scale <= best.scale <= max_scale):
             reasons.append(f"best sample scale {best.scale:.3f} outside [{min_scale}, {max_scale}]")
